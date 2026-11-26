@@ -1,12 +1,14 @@
 import { CATS, SEATS, ITEMS, GUESTS, STATES, EVENT_COPY, catById, seatById } from './data.js';
 import { createDay, wallet, unlocked, available, buy, admit, finishDay, summaryDetails, unmetLimits } from './game.js';
 import { platformFor, SaveStore, Rankings } from './platform.js';
+import { installWindowLayout } from './layout.js';
 import './style.css';
 
 async function main() {
 const root = document.getElementById('app');
 const toastNode = document.getElementById('toast');
 const platform = await platformFor();
+await installWindowLayout(platform);
 const rankings = new Rankings(platform);
 let screen = 'home';
 let day = null;
@@ -128,7 +130,23 @@ function pairArt(result) {
 function feedbackPage() {
   const result = day.results[day.results.length - 1];
   const event = result.events[0];
-  return `<section class="feedback-page">${heading(`第 ${day.results.length} 桌 · ${result.seatId ? seatById(result.seatId).name : '门口'}`, event ? EVENT_COPY[event][1] : result.stars >= 4 ? '这一次，刚刚好。' : '猫有自己的想法。')}${pairArt(result)}<div class="stars" aria-label="${result.stars} 星"><span>${'★'.repeat(result.stars)}</span><span class="empty-stars">${'☆'.repeat(5 - result.stars)}</span></div><blockquote>“${result.review}”</blockquote><div class="feedback-income"><span>本桌收入</span><strong>+${result.income}<small> ◉</small></strong><span>${result.score} 分</span></div><button class="text-button score-toggle" data-action="details" aria-expanded="${detailsOpen}">${detailsOpen ? '收起' : '看看为什么'} ${detailsOpen ? '−' : '+'}</button>${detailsOpen && result.breakdown ? `<div class="score-details">${[['限制', result.breakdown.limits, 40], ['诉求匹配', result.breakdown.match, 30], ['座位', result.breakdown.seat, 15], ['气氛', result.breakdown.atmosphere, 15]].map(([label, score, max]) => `<span>${label}<strong>${score} / ${max}</strong></span>`).join('')}${result.breakdown.adjustment ? `<span>状态修正<strong>${result.breakdown.adjustment > 0 ? '+' : ''}${result.breakdown.adjustment}</strong></span>` : ''}</div>` : ''}<div class="page-bottom">${button(day.results.length === day.guests.length ? '挂上打烊牌 <span>→</span>' : '接待下一位 <span>→</span>', 'continue')}<span class="footnote">今日暂收 ${day.results.reduce((sum, entry) => sum + entry.income, 0)} 金币，打烊后入账</span></div></section>`;
+  const breakdown = result.breakdown;
+  const reasons = breakdown && breakdown.reasons || {};
+  const matchLabel = breakdown && (breakdown.match >= 30 ? '完全合拍' : breakdown.match > 0 ? '基本合拍' : '心愿未满足');
+  const scoreRows = breakdown ? [
+    ['限制', 'limits', 40], ['诉求匹配', 'match', 30], ['座位', 'seat', 15], ['气氛', 'atmosphere', 15],
+  ].map(([label, key, max]) => `<div class="score-detail"><div><span>${label}</span><strong>${breakdown[key]} / ${max}</strong></div><p>${esc(reasons[key] || '此记录使用旧版评分规则。')}</p></div>`).join('') : '';
+  return `<section class="feedback-page">
+    ${heading(`第 ${day.results.length} 桌 · ${result.seatId ? seatById(result.seatId).name : '门口'}`, event ? EVENT_COPY[event][1] : result.stars >= 4 ? '这一次，刚刚好。' : '猫有自己的想法。')}
+    ${pairArt(result)}
+    <div class="stars" aria-label="${result.stars} 星"><span>${'★'.repeat(result.stars)}</span><span class="empty-stars">${'☆'.repeat(5 - result.stars)}</span></div>
+    <blockquote>“${result.review}”</blockquote>
+    <div class="feedback-income"><span>本桌收入</span><strong>+${result.income}<small> ◉</small></strong><span>${result.score} 分</span></div>
+    ${breakdown ? `<p class="match-explanation"><strong>${matchLabel} · 诉求 ${breakdown.match} / 30</strong>${esc(reasons.match || '旧版评分将部分匹配计为 12 分。')}</p>` : ''}
+    <button class="text-button score-toggle" data-action="details" aria-expanded="${detailsOpen}">${detailsOpen ? '收起' : '看看为什么'} ${detailsOpen ? '−' : '+'}</button>
+    ${detailsOpen && breakdown ? `<div class="score-details">${scoreRows}${breakdown.adjustment ? `<div class="score-detail"><div><span>状态修正</span><strong>${breakdown.adjustment > 0 ? '+' : ''}${breakdown.adjustment}</strong></div><p>${esc(reasons.adjustment)}</p></div>` : ''}</div>` : ''}
+    <div class="page-bottom">${button(day.results.length === day.guests.length ? '挂上打烊牌 <span>→</span>' : '接待下一位 <span>→</span>', 'continue')}<span class="footnote">今日暂收 ${day.results.reduce((sum, entry) => sum + entry.income, 0)} 金币，打烊后入账</span></div>
+  </section>`;
 }
 
 function summaryPage() {
@@ -156,7 +174,7 @@ function ranksPage() {
 
 function settingsPage() {
   const cloudTexts = { unavailable: '云存档为内测能力，当前未开放或客户端暂不支持。本机仍会保存进度。', pending: '上次云端写入结果尚未确认。会先查询核对，避免重复写入。', error: '同步暂未成功，本机进度已保留。可稍后重试。', 'too-large': '云存档超过当前单条容量限制，本机进度仍保留。', synced: '已与同账号云存档合并。再次打开时会先读取，营业间歇低频同步。', syncing: '正在核对并合并同账号的进度。', idle: '将在进入小店和营业间歇同步，每分钟最多发起一轮。' };
-  return `<section class="settings-page">${heading('营业手册', '存档与说明')}<div class="info-section"><h2>进度保存</h2><p data-save-status>${saveLabel()}</p><p>关键操作后保存本机进度。中途离开会重开当天，未结算收入不会入账；已购买的解锁会保留。</p>${store.localState === 'write-error' ? button('重试本机保存', 'save-retry', 'secondary') : ''}</div><div class="info-section"><h2>云端同步</h2><p>${cloudTexts[store.cloudState]}</p>${store.cloudAvailable ? button('核对并同步', 'sync', 'secondary') : ''}<p>多设备完成同一天只记一次收入；并发购买合并后按时间核算，可支付的解锁生效。</p></div><div class="info-section"><h2>这一间猫咖</h2><p>八位猫同事，各有脾气。每只猫和每个座位一天只接待一桌。相邻座位的猫若刚吵过，可能会继续拌嘴。</p><p>游戏中的毛类限制属于简化规则，不构成现实中的过敏防护建议。</p><p class="credits">原创猫咪造型与界面 · 场景插画由 AI 辅助生成<br>测试版 0.1 · 猫咖接待</p></div><div class="page-bottom">${button('回到小店', 'back-summary', 'secondary')}</div></section>`;
+  return `<section class="settings-page">${heading('营业手册', '存档与说明')}<div class="info-section"><h2>进度保存</h2><p data-save-status>${saveLabel()}</p><p>关键操作后保存本机进度。中途离开会重开当天，未结算收入不会入账；已购买的解锁会保留。</p>${store.localState === 'write-error' ? button('重试本机保存', 'save-retry', 'secondary') : ''}</div><div class="info-section"><h2>云端同步</h2><p>${cloudTexts[store.cloudState]}</p>${store.cloudAvailable ? button('核对并同步', 'sync', 'secondary') : ''}<p>多设备完成同一天只记一次收入；并发购买合并后按时间核算，可支付的解锁生效。</p></div><div class="info-section"><h2>这一间猫咖</h2><p>八位猫同事，各有脾气。每只猫和每个座位一天只接待一桌。相邻座位的猫若刚吵过，可能会继续拌嘴。</p><p>游戏中的毛类限制属于简化规则，不构成现实中的过敏防护建议。</p><p class="credits">原创猫咪造型与界面 · 场景插画由 AI 辅助生成<br>测试版 0.1.1 · 猫咖接待</p></div><div class="page-bottom">${button('回到小店', 'back-summary', 'secondary')}</div></section>`;
 }
 
 function render() {

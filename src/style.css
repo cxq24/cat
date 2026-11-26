@@ -7,6 +7,8 @@
   --sage: #e8ecdf;
   --ochre: #a16c35;
   --danger: #9b5143;
+  --app-top: 0px;
+  --app-bottom: 0px;
   color: var(--ink);
   background: #e6e8dc;
   font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -26,7 +28,7 @@ h1, h2, h3, p, blockquote { margin: 0; }
 h1 { font-size: 29px; line-height: 1.4; font-weight: 700; letter-spacing: -1px; }
 h2 { font-size: 17px; line-height: 1.5; }
 h3 { font-size: 14px; }
-#app { max-width: 460px; margin: 0 auto; min-height: 100vh; background: var(--paper); box-shadow: 0 0 70px #2f443310; }
+#app { max-width: 460px; margin: 0 auto; min-height: 100vh; padding-top: var(--app-top); padding-bottom: var(--app-bottom); background: var(--paper); box-shadow: 0 0 70px #2f443310; }
 .loading { padding: 80px 24px; text-align: center; }
 .topbar { height: 83px; display: flex; align-items: center; justify-content: space-between; padding: 15px 23px; border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; padding: 0; text-align: left; font-size: 17px; font-weight: 700; letter-spacing: 1px; min-height: 44px; }
@@ -172,7 +174,12 @@ h3 { font-size: 14px; }
 .feedback-income > span:last-child { margin-left: auto; }
 .score-toggle { display: block; margin: 4px auto 0; }
 .score-details { padding: 10px 15px; border-radius: 9px; background: #eeeee1; }
-.score-details > span { display: flex; justify-content: space-between; font-size: 11px; padding: 4px 0; }
+.score-detail { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.score-detail:last-child { border-bottom: 0; }
+.score-detail > div { display: flex; justify-content: space-between; font-size: 12px; }
+.score-detail > p { font-size: 11px; color: #66715c; line-height: 1.8; margin-top: 5px; }
+.match-explanation { font-size: 12px; line-height: 1.8; color: #65715c; margin-top: 12px; }
+.match-explanation strong { color: var(--green); display: block; font-size: 13px; margin-bottom: 3px; }
 .feedback-page .page-bottom { margin-top: 15px; }
 .summary-page .page-heading { margin-bottom: 17px; }
 .summary-page h1 { font-size: 27px; }
@@ -352,43 +359,38 @@ h3 { font-size: 14px; }
   .buy-button { min-width: 59px; margin-left: 5px; }
   .receipt-totals strong { font-size: 26px; }
 }
-@media (max-height: 780px) {
-  .arrange-mode .topbar { display: none; }
-  .arrange-mode .page-content { padding-bottom: 12px; }
-  .arrange-title { padding-top: 14px; }
-  .arrange-page .section-label { margin-top: 11px; margin-bottom: 6px; }
-  .cat-picker:not(.three) { display: flex; overflow-x: auto; padding-bottom: 7px; scrollbar-width: thin; }
-  .cat-picker:not(.three) .cat-option { flex: 0 0 90px; }
-  .cat-picker:not(.three) .option-trait { font-size: 8px; }
-  .cat-picker:not(.three) .option-state { font-size: 9px; }
-  .arrange-mode.many-cats .cat-section-label > span::after { content: ' · 左右滑动'; }
-}
-@media (max-height: 670px) {
-  .arrange-title { padding: 10px 0 8px; }
-  .arrange-title h1 { font-size: 20px; }
-  .arrange-page .section-label { margin-top: 8px; margin-bottom: 5px; }
-  .arrange-page .seat { min-height: 61px; padding: 5px 8px; }
-  .arrange-page .seat-icon { height: 12px; }
-  .arrange-page .floorplan { padding: 8px; }
-  .arrange-page .floor-aisle { height: 16px; line-height: 16px; }
-  .arrange-page .cat-option .cat-art { height: 47px; }
-  .arrange-page .selection-summary { margin-top: 3px; }
-  .arrange-page .selection-summary > button { min-height: 29px; }
-  .arrange-page .arrange-bottom .button { min-height: 44px; }
-}
-@media (max-height: 600px) {
-  .arrange-title { padding-top: 7px; padding-bottom: 6px; }
-  .arrange-page .section-label { margin-top: 6px; margin-bottom: 4px; }
-  .arrange-page .floorplan { padding-top: 6px; padding-bottom: 6px; }
-}
+.compact-window .arrange-mode .topbar { display: none; }
+.compact-window .arrange-mode .page-content { padding-bottom: 12px; }
+.compact-window .arrange-title { padding-top: 14px; }
+.compact-window .arrange-page .section-label { margin-top: 11px; margin-bottom: 6px; }
+.compact-window .cat-picker:not(.three) { display: flex; overflow-x: auto; padding-bottom: 7px; scrollbar-width: thin; }
+.compact-window .cat-picker:not(.three) .cat-option { flex: 0 0 90px; }
+.compact-window .cat-picker:not(.three) .option-trait { font-size: 8px; }
+.compact-window .cat-picker:not(.three) .option-state { font-size: 9px; }
+.compact-window .arrange-mode.many-cats .cat-section-label > span::after { content: ' · 左右滑动'; }
+.small-window .arrange-title { padding: 10px 0 8px; }
+.small-window .arrange-title h1 { font-size: 20px; }
+.small-window .arrange-page .section-label { margin-top: 8px; margin-bottom: 5px; }
+.small-window .arrange-page .seat { min-height: 61px; padding: 5px 8px; }
+.small-window .arrange-page .seat-icon { height: 12px; }
+.small-window .arrange-page .floorplan { padding: 8px; }
+.small-window .arrange-page .floor-aisle { height: 16px; line-height: 16px; }
+.small-window .arrange-page .cat-option .cat-art { height: 47px; }
+.small-window .arrange-page .selection-summary { margin-top: 3px; }
+.small-window .arrange-page .selection-summary > button { min-height: 29px; }
+.small-window .arrange-page .arrange-bottom .button { min-height: 44px; }
+.short-window .arrange-title { padding-top: 7px; padding-bottom: 6px; }
+.short-window .arrange-page .section-label { margin-top: 6px; margin-bottom: 4px; }
+.short-window .arrange-page .floorplan { padding-top: 6px; padding-bottom: 6px; }
 @media (min-width: 600px) {
   body { padding: 30px 0; background-image: radial-gradient(#bdc5ae 0.6px, transparent 0.6px); background-size: 13px 13px; }
   #app { min-height: calc(100vh - 60px); border-radius: 23px; overflow: hidden; border: 1px solid #cad1ba; }
 }
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
-  .page-content { padding-bottom: calc(25px + env(safe-area-inset-bottom)); }
-  #toast { bottom: calc(25px + env(safe-area-inset-bottom)); }
+  :root { --app-top: env(safe-area-inset-top); --app-bottom: env(safe-area-inset-bottom); }
 }
+#toast { bottom: calc(25px + var(--app-bottom)); }
+.modal-backdrop { padding-top: calc(24px + var(--app-top)); padding-bottom: calc(24px + var(--app-bottom)); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

@@ -2,19 +2,24 @@ import { test, expect } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { createProgress } from '../../src/game.js';
 
-async function bridge(page, { full = false, readError = false, progress = null } = {}) {
+async function bridge(page, { full = false, readError = false, progress = null, windowInfo = null, windowInfoFailure = false } = {}) {
   const initial = progress || createProgress(1000);
   initial.seed = 713;
-  await page.addInitScript(({ initial, full, readError }) => {
+  await page.addInitScript(({ initial, full, readError, windowInfo, windowInfoFailure }) => {
     const key = 'cat-cafe-test-save';
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ progress: initial }));
     window.__calls = { writes: 0, shares: [], scores: [], cloud: [] };
+    window.__windowInfo = windowInfo;
     window.xhs = {
-      launchOptions: { miniToolEnv: { buildVersion: 9550001 } },
+      launchOptions: { miniToolEnv: { buildVersion: 9550001, windowInfo } },
       miniTool: {
         getStorage: async () => { if (readError) throw new Error('test read failure'); return { data: localStorage.getItem(key) }; },
         setStorage: async ({ data }) => { window.__calls.writes++; localStorage.setItem(key, data); return { errMsg: 'setStorage:ok' }; },
       }
+    };
+    if (windowInfo) window.xhs.miniTool.getWindowInfo = async () => {
+      if (windowInfoFailure) throw new Error('window info not available');
+      return window.__windowInfo;
     };
     if (full) {
       Object.assign(window.xhs.miniTool, {
@@ -27,7 +32,7 @@ async function bridge(page, { full = false, readError = false, progress = null }
         share: async value => { window.__calls.shares.push(value); return {}; },
       });
     }
-  }, { initial, full, readError });
+  }, { initial, full, readError, windowInfo, windowInfoFailure });
 }
 
 async function startDay(page) {
@@ -68,6 +73,12 @@ test('complete first day, enforce occupancy, persist purchases and start next da
   await page.locator('[data-action="admit"]').click();
   await page.locator('[data-action="continue"]').click();
   await seatNext(page, 'C03', 'S02');
+  await expect(page.locator('.match-explanation')).toContainText('基本合拍 · 诉求 20 / 30');
+  await expect(page.locator('.match-explanation')).toContainText('米粒');
+  await page.locator('[data-action="details"]').click();
+  await expect(page.locator('.score-detail')).toHaveCount(4);
+  await expect(page.locator('.score-details')).toContainText('安静角落');
+  await page.screenshot({ path: 'artifacts/scoring-v0.1.1.png', fullPage: true });
   await page.locator('[data-action="continue"]').click();
   await expect(page.getByText('今天最合拍的一对。')).toBeVisible();
   await expect(page.locator('.receipt-totals')).toBeInViewport();
@@ -164,3 +175,51 @@ for (const width of [320, 375, 430]) {
     expect(end.y + end.height - bounds.y).toBeLessThan(Math.round(width * 16 / 9));
   });
 }
+
+const rectangle = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
+
+test('notched screen clears status bar and capsule on home, roster, guest and arrangement', async ({ page }) => {
+  const windowInfo = { windowWidth: 390, windowHeight: 844, statusBarHeight: 47, screenTop: 0, safeArea: rectangle(0, 47, 390, 763), menuButtons: { capsule: rectangle(281, 54, 99, 34) } };
+  await bridge(page, { windowInfo });
+  await page.goto('/');
+  await expect(page.locator('.brand')).toBeVisible();
+  const top = await page.locator('.topbar').boundingBox();
+  expect(top.y).toBe(96);
+  const style = await page.locator('#app').evaluate(node => ({ top: getComputedStyle(node).paddingTop, bottom: getComputedStyle(node).paddingBottom }));
+  expect(style).toEqual({ top: '96px', bottom: '34px' });
+  await page.evaluate(() => {
+    const status = document.createElement('div');
+    status.style.cssText = 'position:fixed;top:0;left:0;right:0;height:47px;background:#f7f3e9;z-index:999;display:flex;align-items:center;justify-content:space-between;padding:0 25px;font:bold 13px sans-serif';
+    status.innerHTML = '<span>09:41</span><span>▂▄▆　Wi-Fi　▰</span>';
+    const capsule = document.createElement('div');
+    capsule.style.cssText = 'position:fixed;right:10px;top:54px;width:99px;height:34px;background:#eeeadd;border:1px solid #c8ceb5;border-radius:20px;z-index:999;text-align:center;line-height:32px';
+    capsule.textContent = '···　│　×';
+    document.body.append(status, capsule);
+  });
+  await page.screenshot({ path: 'artifacts/safe-area-v0.1.1.png', fullPage: true });
+  await page.locator('[data-action="open"]').click();
+  expect((await page.locator('h1').boundingBox()).y).toBeGreaterThan(88);
+  await page.locator('[data-action="guest"]').click();
+  expect((await page.locator('h1').boundingBox()).y).toBeGreaterThan(88);
+  await page.locator('[data-action="arrange"]').click();
+  expect((await page.locator('h1').boundingBox()).y).toBeGreaterThan(88);
+  await expect(page.locator('.demand.compact')).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('.cat-picker')).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('[data-action="admit"]')).toBeInViewport({ ratio: 1 });
+  await page.evaluate(() => {
+    window.__windowInfo.menuButtons.capsule = { left: 321, top: 30, width: 99, height: 37, right: 420, bottom: 67 };
+    window.__windowInfo.windowWidth = 430;
+    window.__windowInfo.windowHeight = 800;
+    window.__windowInfo.safeArea.bottom = 766;
+  });
+  await page.setViewportSize({ width: 430, height: 800 });
+  await expect.poll(() => page.locator('#app').evaluate(node => getComputedStyle(node).paddingTop)).toBe('75px');
+});
+
+test('launch snapshot remains safe when live window information fails', async ({ page }) => {
+  const windowInfo = { windowWidth: 390, windowHeight: 844, safeArea: rectangle(0, 24, 390, 820), menuButtons: { back: rectangle(10, 28, 32, 32), me: null, share: rectangle(345, 28, 32, 32) } };
+  await bridge(page, { windowInfo, windowInfoFailure: true });
+  await page.goto('/');
+  await expect(page.locator('.brand')).toBeVisible();
+  expect((await page.locator('.topbar').boundingBox()).y).toBe(68);
+});

@@ -3,15 +3,16 @@ import { createProgress, validateProgress, mergeProgress } from './game.js';
 export async function platformFor(scope = window) {
   const xhs = scope.xhs;
   const api = xhs && xhs.miniTool;
+  let launchOptions = xhs && xhs.launchOptions;
   const read = options => {
     const raw = options && options.miniToolEnv && options.miniToolEnv.buildVersion;
     return /^[1-9]\d{6,}$/.test(String(raw)) && Number.isSafeInteger(Number(raw)) ? Math.floor(Number(raw) / 1000) : null;
   };
-  let version = read(xhs && xhs.launchOptions);
+  let version = read(launchOptions);
   if (version === null && api && typeof api.getLaunchOptions === 'function') {
-    try { version = read(await api.getLaunchOptions()); } catch { /* Remains unknown. */ }
+    try { launchOptions = await api.getLaunchOptions(); version = read(launchOptions); } catch { /* Remains unknown. */ }
   }
-  return { api, version, preview: Boolean(scope.__CAT_CAFE_PREVIEW__), supports: (minimum, methods) => version !== null && version >= minimum && Boolean(api) && methods.every(method => typeof api[method] === 'function') };
+  return { api, version, launchOptions, preview: Boolean(scope.__CAT_CAFE_PREVIEW__), supports: (minimum, methods) => version !== null && version >= minimum && Boolean(api) && methods.every(method => typeof api[method] === 'function') };
 }
 
 export const LOCAL_KEY = 'cat_cafe_reception_v1';

@@ -131,27 +131,52 @@ export function unmetLimits(guest, cat, seat) {
   });
 }
 
+export function requestMatch(guest, cat, seat, status) {
+  const has = tag => cat.tags.includes(tag);
+  const result = (score, reason) => ({ score, reason });
+  switch (guest.need) {
+    case '想被粘':
+      if (has('粘人')) return status.state === 'sleep' ? result(20, `${cat.name}性格粘人，但今天正在睡觉，陪伴感稍弱。`) : result(30, `${cat.name}性格粘人，今天也醒着，能主动陪伴。`);
+      if (!has('高冷') && status.state === 'happy') return result(20, `${cat.name}今天心情好，愿意接近人，性格里没有主动粘人的特质。`);
+      return result(0, `${cat.name}${status.state === 'sleep' ? '今天正在睡觉' : '性格偏高冷'}，难以回应主动陪伴的心愿。`);
+    case '只想拍照':
+      if (has('爱拆家') && seat.tree) return result(0, `${cat.name}爱拆家，又坐在猫树旁，难以安稳完成拍摄。`);
+      if (has('上镜') || has('会抢镜') || status.state === 'camera') return result(30, `${cat.name}${status.state === 'camera' ? '今天想抢镜' : '有' + (has('上镜') ? '上镜' : '会抢镜') + '特质'}，很适合这次拍摄。`);
+      return result(20, `${cat.name}可以配合普通拍摄，性格中没有上镜或抢镜特质；睡觉、毛长均不额外扣拍照分。`);
+    case '带小孩':
+      if (cat.scratch || has('爱拆家')) return result(0, `${cat.name}${cat.scratch ? '可能抓人' : '爱拆家'}，难以满足小朋友需要的稳妥陪伴。`);
+      return result(30, `${cat.name}不会抓人，也没有拆家特质，符合陪伴小朋友的需求。`);
+    case '第一次来怕猫':
+      if (has('爱拆家') || (has('粘人') && status.state === 'camera')) return result(0, `${cat.name}${has('爱拆家') ? '爱拆家' : '粘人又想抢镜'}，对第一次来、怕猫的客人过于热情。`);
+      if ((has('安静') || has('高冷') || has('温和')) && status.state !== 'camera') return result(30, `${cat.name}的${cat.tags.join('、')}性格，给第一次来的客人留出了空间。`);
+      if (has('怕生') || has('安静') || has('高冷') || has('温和')) return result(20, `${cat.name}${has('怕生') ? '也有些怕生，能保持距离，陪伴感稍弱' : '平时性格合适，但今天想抢镜'}。`);
+      return result(0, `${cat.name}性格偏主动，暂时难以让怕猫的客人放松。`);
+    case '要安静': {
+      const calm = (has('安静') || has('高冷')) && status.state !== 'camera';
+      if (calm && seat.quiet) return result(30, `${cat.name}今天安静，${seat.name}也是安静座位，能专心歇一会儿。`);
+      if (seat.quiet) return result(20, `${seat.name}很安静，${cat.name}${status.state === 'camera' ? '今天想抢镜' : '的性格里没有安静或高冷特质'}，本次符合安静环境，猫咪状态仅基本合适。`);
+      if (calm) return result(20, `${cat.name}今天安静，${seat.name}属于${seat.tags.join('、')}的座位，环境还不够安静。`);
+      return result(0, '猫咪状态和座位环境都不符合安静诉求。');
+    }
+    case '过敏，但还是想来': return cat.fur !== '长毛' ? result(30, `${cat.name}是${cat.fur}，符合这位客人明确提出的游戏内毛类需求。`) : result(0, `${cat.name}是长毛，与这位客人的毛类需求冲突。`);
+    case '点名伯爵': return cat.id === 'C08' ? result(30, '见到了点名的伯爵，心愿达成。') : result(0, `客人点名伯爵，本次安排的是${cat.name}。`);
+    case '不要太粘': return has('粘人') ? result(0, `${cat.name}性格粘人，与想保持距离的心愿冲突。`) : result(30, `${cat.name}没有粘人特质，符合各自安静相处的心愿。`);
+    default: return result(0, '这项心愿尚没有对应的匹配规则。');
+  }
+}
+
 export function evaluate(guest, cat, seat, status, day, progress) {
   const has = tag => cat.tags.includes(tag);
   const broken = unmetLimits(guest, cat, seat);
   const limitScore = guest.limits.length ? 40 * (guest.limits.length - broken.length) / guest.limits.length : 40;
-  let match = 0;
-  switch (guest.need) {
-    case '想被粘': match = has('粘人') ? status.state === 'sleep' ? 12 : 30 : !has('高冷') && status.state === 'happy' ? 12 : 0; break;
-    case '只想拍照': match = has('爱拆家') && seat.tree ? 0 : has('上镜') || has('会抢镜') || status.state === 'camera' ? 30 : cat.fur !== '长毛' && status.state !== 'sleep' ? 12 : 0; break;
-    case '带小孩': match = cat.scratch || has('爱拆家') ? 0 : has('会抢镜') || status.state === 'camera' ? 12 : 30; break;
-    case '第一次来怕猫': match = has('爱拆家') ? 0 : (has('安静') || has('高冷')) && status.state !== 'camera' ? 30 : has('温和') || has('怕生') ? 12 : 0; break;
-    case '要安静': {
-      const calm = (has('安静') || has('高冷')) && status.state !== 'camera';
-      match = calm && seat.quiet ? 30 : calm || seat.quiet ? 12 : 0;
-      break;
-    }
-    case '过敏，但还是想来': match = cat.fur === '无毛' ? 30 : cat.fur === '短毛' ? 12 : 0; break;
-    case '点名伯爵': match = cat.id === 'C08' ? 30 : 0; break;
-    case '不要太粘': match = has('粘人') ? 0 : 30; break;
+  const request = requestMatch(guest, cat, seat, status);
+  let match = request.score;
+  if (guest.need === '第一次来怕猫' && available(progress, 'cushion') && match < 30) {
+    const bonus = Math.min(8, 30 - match);
+    match += bonus;
+    request.reason += ` 软垫增加 ${bonus} 分。`;
   }
-  if (guest.need === '第一次来怕猫' && available(progress, 'cushion')) match = Math.min(30, match + 8);
-  const seatScore = guest.preferences.length ? guest.preferences.includes(seat.type) ? 15 : 0 : broken.length ? 0 : 10;
+  const seatScore = !guest.preferences.length || guest.preferences.includes(seat.type) ? 15 : 0;
   const fightingWith = day.results.filter(result => {
     if (!result.catId || !isAdjacent(seat.id, result.seatId)) return false;
     const other = day.cats.find(entry => entry.id === result.catId);
@@ -171,7 +196,14 @@ export function evaluate(guest, cat, seat, status, day, progress) {
   if (cat.id === 'C08' && stars >= 4) events.push('rare');
   if (guest.need === '点名伯爵' && cat.id !== 'C08') events.push('missing');
   const review = events.length ? EVENT_COPY[events[0]][0] : REVIEWS[stars][(day.number + guest.id + Number(cat.id.slice(1))) % REVIEWS[stars].length];
-  return { guestId: guest.id, catId: cat.id, seatId: seat.id, score, stars, income, events, review, broken, breakdown: { limits: limitScore, match, seat: seatScore, atmosphere, adjustment }, fightingWith: fightingWith.map(result => result.catId) };
+  const reasons = {
+    limits: guest.limits.length ? broken.length ? `未满足${broken.join('、')}；${guest.limits.length} 项限制均分 40 分。` : `符合${guest.limits.join('、')}，限制项得满分。` : '客人没有额外限制，限制项计满分。',
+    match: request.reason,
+    seat: !guest.preferences.length ? '客人没有座位偏好，本项计满分。' : seatScore ? `${seat.name}命中了${guest.preferences.join(' / ')}的偏好。` : `偏好${guest.preferences.join(' / ')}，本次安排了${seat.name}。`,
+    atmosphere: fightingWith.length ? `与${fightingWith.map(result => catById(result.catId).name).join('、')}相邻，触发了当天的争吵关系。` : '在店气氛平稳，计满分。',
+    adjustment: adjustment > 0 ? '今天想抢镜，拍照诉求额外 +10 分，总分最高 100。' : adjustment < 0 ? '今天想抢镜，让怕猫的客人有些紧张，额外 -10 分。' : '',
+  };
+  return { guestId: guest.id, catId: cat.id, seatId: seat.id, score, stars, income, events, review, broken, scoringVersion: 2, breakdown: { limits: limitScore, match, seat: seatScore, atmosphere, adjustment, reasons }, fightingWith: fightingWith.map(result => result.catId) };
 }
 
 export function admit(day, progress, catId, seatId) {

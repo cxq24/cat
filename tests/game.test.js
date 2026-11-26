@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CATS, GUESTS, SEATS } from '../src/data.js';
-import { createProgress, createDay, evaluate, admit, finishDay, wallet, buy, mergeProgress, validateProgress, summaryDetails } from '../src/game.js';
+import { createProgress, createDay, evaluate, requestMatch, admit, finishDay, wallet, buy, mergeProgress, validateProgress, summaryDetails } from '../src/game.js';
 
 const cat = id => CATS.find(value => value.id === id);
 const guest = id => GUESTS.find(value => value.id === id);
@@ -37,9 +37,10 @@ test('all hard restrictions are visible scoring penalties and still permit seati
 test('sleeping changes companionship score once, camera adjustment caps at 100', () => {
   const day = emptyDay();
   const result = evaluate(guest(2), cat('C01'), seat('S02'), state('C01', 'sleep'), day, createProgress());
-  assert.equal(result.breakdown.match, 12);
+  assert.equal(result.breakdown.match, 20);
   assert.equal(result.breakdown.adjustment, 0);
-  assert.equal(result.score, 82);
+  assert.equal(result.score, 90);
+  assert.match(result.breakdown.reasons.match, /正在睡觉/);
   const photo = evaluate(guest(5), cat('C03'), seat('S03'), state('C03', 'camera'), day, createProgress());
   assert.equal(photo.score, 100);
   assert.equal(photo.stars, 5);
@@ -114,7 +115,7 @@ test('new unlocks only affect newly generated day and cushion caps request score
   assert.ok(next.cats.some(value => value.id === 'C04'));
   assert.ok(next.seats.includes('S04'));
   const result = evaluate(guest(4), cat('C03'), seat('S02'), state('C03'), emptyDay(), progress);
-  assert.equal(result.breakdown.match, 20);
+  assert.equal(result.breakdown.match, 28);
 });
 
 test('cloud merge credits same day once and resolves concurrent purchases without negative wallet', () => {
@@ -150,4 +151,46 @@ test('corrupt progress is rejected before it can replace existing data', () => {
   const broken = createProgress();
   broken.days[1] = { revenue: -100, score: 20, at: 300 };
   assert.throws(() => validateProgress(broken));
+});
+
+test('basic match is 20 and explains which part of a quiet visit is satisfied', () => {
+  const result = evaluate(guest(7), cat('C03'), seat('S02'), state('C03'), emptyDay(), createProgress());
+  assert.equal(result.breakdown.limits, 40);
+  assert.equal(result.breakdown.match, 20);
+  assert.equal(result.breakdown.seat, 15);
+  assert.equal(result.breakdown.atmosphere, 15);
+  assert.equal(result.score, 90);
+  assert.match(result.breakdown.reasons.match, /米粒/);
+  assert.match(result.breakdown.reasons.match, /安静角落/);
+  assert.equal(result.scoringVersion, 2);
+});
+
+test('photography, children and allergy only use relevant, stated requirements', () => {
+  assert.equal(requestMatch(guest(5), cat('C06'), seat('S03'), state('C06', 'sleep')).score, 20);
+  assert.equal(requestMatch(guest(5), cat('C06'), seat('S03'), state('C06', 'happy')).score, 20);
+  assert.equal(requestMatch(guest(3), cat('C01'), seat('S02'), state('C01', 'camera')).score, 30);
+  assert.equal(requestMatch(guest(9), cat('C02'), seat('S02'), state('C02')).score, 30);
+  assert.equal(requestMatch(guest(9), cat('C01'), seat('S02'), state('C01')).score, 0);
+});
+
+test('unspecified seat preference is full credit without unrelated double penalty', () => {
+  const result = evaluate(guest(9), cat('C01'), seat('S02'), state('C01'), emptyDay(), createProgress());
+  assert.equal(result.breakdown.limits, 0);
+  assert.equal(result.breakdown.seat, 15);
+  assert.match(result.breakdown.reasons.seat, /没有座位偏好/);
+});
+
+test('existing settled records retain old scores when new rules are installed', () => {
+  const progress = createProgress(1000);
+  const day = emptyDay();
+  admit(day, progress, 'C01', 'S01');
+  admit(day, progress, 'C02', 'S02');
+  admit(day, progress, 'C03', 'S03');
+  finishDay(progress, day, 2000);
+  const old = progress.summary.results[0];
+  old.score = 82;
+  old.breakdown.match = 12;
+  delete old.scoringVersion;
+  delete old.breakdown.reasons;
+  assert.equal(validateProgress(JSON.parse(JSON.stringify(progress))).summary.results[0].score, 82);
 });
