@@ -106,7 +106,7 @@ test('partial day reload keeps base wallet and restarts with all cats free', asy
   await startDay(page);
   await seatNext(page, 'C01', 'S01');
   await page.reload();
-  await expect(page.locator('.coin')).toContainText('20');
+  await expect(page.locator('.wallet-balance')).toContainText('20');
   await startDay(page);
   await page.locator('[data-action="arrange"]').click();
   await expect(page.locator('[data-action="cat"][data-id="C01"]')).toBeEnabled();
@@ -143,6 +143,14 @@ test('cloud, leaderboard and share use SDK under restrictive CSP without externa
   const share = await page.evaluate(() => window.__calls.shares[0]);
   expect(share.type).toBe('image');
   expect(share.image_resource).toMatch(/^data:image\/png;base64,/);
+  await page.evaluate(() => { window.xhs.miniTool.share = () => new Promise(resolve => { window.__finishShare = resolve; }); });
+  await page.locator('[data-action="share-menu"]').click();
+  await page.locator('[data-action="share-card"]').click();
+  await expect(page.locator('[data-action="close-modal"]')).toBeEnabled();
+  await page.locator('[data-action="close-modal"]').click();
+  await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+  await page.evaluate(() => window.__finishShare({}));
+  await expect(page.locator('.summary-page')).toBeVisible();
   await page.locator('[data-action="ranks"]').click();
   await expect(page.locator('.my-rank')).toContainText('92.5');
   await expect(page.locator('.rank-list li')).toHaveCount(2);
@@ -150,6 +158,18 @@ test('cloud, leaderboard and share use SDK under restrictive CSP without externa
   await page.screenshot({ path: 'artifacts/ranking-mobile.png', fullPage: true });
   await page.getByRole('tab', { name: '总榜' }).click();
   await expect(page.getByRole('tab', { name: '总榜' })).toHaveAttribute('aria-selected', 'true');
+  await page.evaluate(() => { window.xhs.miniTool.submitScore = () => new Promise(resolve => { window.__finishScore = resolve; }); });
+  await page.locator('[data-action="submit-rank"]').click();
+  await expect(page.locator('[data-action="submit-rank"]')).toBeDisabled();
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.summary-page')).toBeVisible();
+  await page.evaluate(() => window.__finishScore({ score: 90 }));
+  await expect(page.locator('.summary-page')).toBeVisible();
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+  await page.locator('[data-action="ranks"]').click();
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
   expect(external).toEqual([]);
 });
 
@@ -184,9 +204,14 @@ test('notched screen clears status bar and capsule on home, roster, guest and ar
   await page.goto('/');
   await expect(page.locator('.brand')).toBeVisible();
   const top = await page.locator('.topbar').boundingBox();
-  expect(top.y).toBe(96);
+  expect(top.y).toBe(49);
   const style = await page.locator('#app').evaluate(node => ({ top: getComputedStyle(node).paddingTop, bottom: getComputedStyle(node).paddingBottom }));
-  expect(style).toEqual({ top: '96px', bottom: '34px' });
+  expect(style).toEqual({ top: '49px', bottom: '34px' });
+  const brand = await page.locator('.brand').boundingBox();
+  expect(brand.x + brand.width).toBeLessThan(281);
+  expect(Math.abs(brand.y + brand.height / 2 - 71)).toBeLessThanOrEqual(1);
+  await expect(page.locator('.topbar [data-action="settings"]')).toHaveCount(0);
+  await expect(page.locator('.topbar .wallet-balance')).toHaveCount(0);
   await page.evaluate(() => {
     const status = document.createElement('div');
     status.style.cssText = 'position:fixed;top:0;left:0;right:0;height:47px;background:#f7f3e9;z-index:999;display:flex;align-items:center;justify-content:space-between;padding:0 25px;font:bold 13px sans-serif';
@@ -196,13 +221,16 @@ test('notched screen clears status bar and capsule on home, roster, guest and ar
     capsule.textContent = '···　│　×';
     document.body.append(status, capsule);
   });
-  await page.screenshot({ path: 'artifacts/safe-area-v0.1.1.png', fullPage: true });
+  await page.screenshot({ path: 'artifacts/safe-area-v0.1.2.png', fullPage: true });
   await page.locator('[data-action="open"]').click();
   expect((await page.locator('h1').boundingBox()).y).toBeGreaterThan(88);
   await page.locator('[data-action="guest"]').click();
   expect((await page.locator('h1').boundingBox()).y).toBeGreaterThan(88);
   await page.locator('[data-action="arrange"]').click();
   expect((await page.locator('h1').boundingBox()).y).toBeGreaterThan(88);
+  await expect(page.locator('.nav-back')).toBeInViewport({ ratio: 1 });
+  const back = await page.locator('.nav-back').boundingBox();
+  expect(back.x + back.width).toBeLessThan(281);
   await expect(page.locator('.demand.compact')).toBeInViewport({ ratio: 1 });
   await expect(page.locator('.cat-picker')).toBeInViewport({ ratio: 1 });
   await expect(page.locator('[data-action="admit"]')).toBeInViewport({ ratio: 1 });
@@ -211,9 +239,10 @@ test('notched screen clears status bar and capsule on home, roster, guest and ar
     window.__windowInfo.windowWidth = 430;
     window.__windowInfo.windowHeight = 800;
     window.__windowInfo.safeArea.bottom = 766;
+    window.__windowInfo.safeArea.top = 24;
   });
   await page.setViewportSize({ width: 430, height: 800 });
-  await expect.poll(() => page.locator('#app').evaluate(node => getComputedStyle(node).paddingTop)).toBe('75px');
+  await expect.poll(() => page.locator('#app').evaluate(node => getComputedStyle(node).paddingTop)).toBe('26.5px');
 });
 
 test('launch snapshot remains safe when live window information fails', async ({ page }) => {
@@ -221,5 +250,144 @@ test('launch snapshot remains safe when live window information fails', async ({
   await bridge(page, { windowInfo, windowInfoFailure: true });
   await page.goto('/');
   await expect(page.locator('.brand')).toBeVisible();
-  expect((await page.locator('.topbar').boundingBox()).y).toBe(68);
+  expect((await page.locator('.topbar').boundingBox()).y).toBe(24);
+});
+
+test('all reception screens have a visible exit and leaving resets only unfinished work', async ({ page }) => {
+  await bridge(page);
+  await page.goto('/');
+  await expect(page.locator('.topbar')).toHaveText('猫咖接待');
+  await expect(page.locator('.wallet-balance')).toContainText('金币余额');
+  await expect(page.locator('.wallet-balance')).toContainText('20');
+  await page.locator('[data-action="open"]').click();
+  await expect(page.locator('.nav-back')).toBeVisible();
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+  await startDay(page);
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+  await startDay(page);
+  await page.locator('[data-action="arrange"]').click();
+  await page.locator('[data-action="cat"][data-id="C01"]').click();
+  await page.locator('[data-action="seat"][data-id="S01"]').click();
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+  await startDay(page);
+  await page.locator('[data-action="arrange"]').click();
+  await expect(page.locator('[data-action="admit"]')).toBeDisabled();
+  await page.locator('[data-action="cat"][data-id="C01"]').click();
+  await page.locator('[data-action="seat"][data-id="S01"]').click();
+  await page.locator('[data-action="admit"]').click();
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.feedback-page')).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+  await expect(page.locator('.wallet-balance')).toContainText('20');
+  await startDay(page);
+  await page.locator('[data-action="arrange"]').click();
+  await expect(page.locator('[data-action="cat"][data-id="C01"]')).toBeEnabled();
+});
+
+test('shop balance stays in content and sticky back remains available after scrolling', async ({ page }) => {
+  await bridge(page);
+  await page.goto('/');
+  await page.locator('[data-action="shop"]').click();
+  await expect(page.locator('.wallet-panel')).toContainText('20');
+  await expect(page.locator('.topbar')).not.toContainText('20');
+  await page.locator('[data-action="buy"][data-id="wand"]').click();
+  await expect(page.locator('.wallet-panel')).toContainText('2');
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(page.locator('.nav-back')).toBeInViewport({ ratio: 1 });
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+  await expect(page.locator('.wallet-balance')).toContainText('2');
+});
+
+test('unsupported leaderboard has a stable entry, a clear explanation and a working back button', async ({ page }) => {
+  await bridge(page);
+  await page.goto('/');
+  await page.locator('[data-action="ranks"]').click();
+  await expect(page.getByText('排行榜暂未开放')).toBeVisible();
+  await expect(page.getByText('当前环境暂不支持排行榜，可以先继续营业。')).toBeVisible();
+  await page.locator('.nav-back').click();
+  await expect(page.locator('[data-action="ranks"]')).toBeVisible();
+  await page.locator('[data-action="ranks"]').click();
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+});
+
+test('permission denial preserves leaderboard entry and explicit retry can recover', async ({ page }) => {
+  await bridge(page, { full: true });
+  await page.goto('/');
+  await page.evaluate(() => { window.xhs.miniTool.getRankList = async () => { throw { errCode: 1005 }; }; });
+  await page.locator('[data-action="ranks"]').click();
+  await expect(page.getByText('当前小工具的排行榜权限尚未开通，开放后即可查看。')).toBeVisible();
+  await expect(page.getByText(/关注/)).toHaveCount(0);
+  await page.locator('.nav-back').click();
+  await expect(page.locator('[data-action="ranks"]')).toBeVisible();
+  await page.locator('[data-action="ranks"]').click();
+  await expect(page.getByText('排行榜暂未开放')).toBeVisible();
+  await page.evaluate(() => {
+    window.xhs.miniTool.getRankList = async () => ({ data: [] });
+    window.xhs.miniTool.getMyRank = async () => ({ status: 'NO_SCORE' });
+  });
+  await page.locator('[data-action="load-rank"]').click();
+  await expect(page.getByText('这一期还没有成绩，等第一位接待员上榜。')).toBeVisible();
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+});
+
+test('back works during a pending leaderboard request and late results do not reopen it', async ({ page }) => {
+  await bridge(page, { full: true });
+  await page.goto('/');
+  await page.evaluate(() => {
+    window.xhs.miniTool.getRankList = () => new Promise(resolve => { window.__finishRank = resolve; });
+  });
+  await page.locator('[data-action="ranks"]').click();
+  await expect(page.getByText('正在翻开接待榜…')).toBeVisible();
+  await page.locator('.nav-back').click({ timeout: 1000 });
+  await expect(page.locator('.home-page')).toBeVisible();
+  await page.evaluate(() => window.__finishRank({ data: [] }));
+  await expect(page.locator('.ranks-page')).toHaveCount(0);
+  await expect(page.locator('.home-page')).toBeVisible();
+});
+
+test('leaderboard timeout is shown as a failed load with retry, rather than empty results', async ({ page }) => {
+  await bridge(page, { full: true });
+  await page.clock.install();
+  await page.goto('/');
+  await page.evaluate(() => { window.xhs.miniTool.getRankList = () => new Promise(() => {}); });
+  await page.locator('[data-action="ranks"]').click();
+  await expect(page.getByText('正在翻开接待榜…')).toBeVisible();
+  await page.clock.fastForward(8100);
+  await expect(page.getByText('暂时没能加载榜单')).toBeVisible();
+  await expect(page.locator('[data-action="load-rank"]')).toBeVisible();
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+});
+
+test('return during seating save remains on home when the delayed save finishes', async ({ page }) => {
+  await bridge(page);
+  await page.goto('/');
+  await startDay(page);
+  await page.locator('[data-action="arrange"]').click();
+  await page.locator('[data-action="cat"][data-id="C01"]').click();
+  await page.locator('[data-action="seat"][data-id="S01"]').click();
+  await page.evaluate(() => {
+    const previous = window.xhs.miniTool.setStorage;
+    window.xhs.miniTool.setStorage = options => new Promise(resolve => {
+      window.__finishSave = async () => { resolve(await previous(options)); };
+    });
+  });
+  await page.locator('[data-action="admit"]').click();
+  await expect(page.locator('[data-action="admit"]')).toHaveAttribute('aria-busy', 'true');
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('.nav-back').click({ timeout: 1000 });
+  await expect(page.locator('.home-page')).toBeVisible();
+  await page.evaluate(() => window.__finishSave());
+  await expect(page.locator('.home-page')).toBeVisible();
+  await expect(page.locator('.feedback-page')).toHaveCount(0);
+  await expect(page.locator('.wallet-balance')).toContainText('20');
 });

@@ -176,7 +176,19 @@ export class Rankings {
   constructor(platform) {
     this.platform = platform;
     this.available = platform.supports(9510, ['submitScore', 'getRankList', 'getMyRank']);
+    this.supported = this.available;
+    this.failureReason = this.available ? null : 'unsupported';
     this.cache = new Map();
+  }
+
+  async request(method, options) {
+    let timeout;
+    try {
+      return await Promise.race([
+        this.platform.api[method](options),
+        new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('排行榜请求超时')), 8000); }),
+      ]);
+    } finally { clearTimeout(timeout); }
   }
 
   async submit(summary) {
@@ -184,34 +196,38 @@ export class Rankings {
     const total = summary.results.reduce((sum, result) => sum + result.score, 0);
     const score = Math.round(total / summary.results.length * 100) / 100;
     try {
-      await this.platform.api.submitScore({ board: 1, score });
+      await this.request('submitScore', { board: 1, score });
       this.cache.clear();
       return true;
     } catch (error) {
-      if (isDenied(error)) this.available = false;
+      if (isDenied(error)) { this.available = false; this.failureReason = 'permission'; }
       return false;
     }
   }
 
   async list(period) {
+    if (!this.supported) throw new Error('当前环境暂不支持排行榜');
     const cached = this.cache.get(period);
-    if (cached && Date.now() - cached.at < 30000) return cached.value;
+    if (this.available && cached && Date.now() - cached.at < 30000) return cached.value;
     try {
       let rows;
       for (const delay of [0, 500, 1000, 2000, 4000]) {
         if (delay) await new Promise(resolve => setTimeout(resolve, delay));
         try {
-          rows = await this.platform.api.getRankList({ board: 1, period });
+          rows = await this.request('getRankList', { board: 1, period });
           break;
         } catch (error) { if (Number(error.errCode) !== 2002 || delay === 4000) throw error; }
       }
-      const mine = await this.platform.api.getMyRank({ board: 1, period });
+      const mine = await this.request('getMyRank', { board: 1, period });
       if (!rows || !Array.isArray(rows.data) || !mine || !['EXACT', 'OVER_LIMIT', 'NO_SCORE', 'NOT_PARTICIPATING'].includes(mine.status)) throw new Error('榜单数据暂不可用');
       const value = { rows: rows.data, mine };
+      this.available = true;
+      this.failureReason = null;
       this.cache.set(period, { at: Date.now(), value });
       return value;
     } catch (error) {
-      if (isDenied(error)) this.available = false;
+      if (isDenied(error)) { this.available = false; this.failureReason = 'permission'; }
+      else this.failureReason = 'network';
       throw error;
     }
   }

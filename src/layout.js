@@ -15,10 +15,20 @@ export function windowInsets(info) {
   const statusTop = nonnegative(info.statusBarHeight) && nonnegative(info.screenTop) ? Math.max(0, info.statusBarHeight - info.screenTop) : 0;
   const hasSafeTop = nonnegative(safe.top);
   if (!hasSafeTop && !rectangles.length && !statusTop) return null;
-  // Safe area and native controls already use container coordinates.
-  const coveredTop = rectangles.reduce((top, rect) => Math.max(top, rect.bottom), hasSafeTop ? safe.top : statusTop);
+  const safeTop = hasSafeTop ? safe.top : statusTop;
+  const height = Math.max(44, ...rectangles.map(rect => rect.height));
+  const alignment = rectangles.reduce((selected, rect) => !selected || rect.bottom > selected.bottom ? rect : selected, null);
+  // Share the native controls' row, with horizontal space reserved on each side.
+  const top = alignment ? Math.max(safeTop, alignment.top + alignment.height / 2 - height / 2) : safeTop;
+  const width = info.windowWidth || info.screenWidth;
+  let left = 20;
+  let right = 20;
+  rectangles.forEach(rect => {
+    if (rect.left + rect.width / 2 < width / 2) left = Math.max(left, rect.right + 8);
+    else right = Math.max(right, width - rect.left + 8);
+  });
   const bottom = nonnegative(info.windowHeight) && nonnegative(safe.bottom) ? Math.max(0, info.windowHeight - safe.bottom) : null;
-  return { top: coveredTop > 0 ? coveredTop + 8 : 0, bottom };
+  return { top, bottom, height, left, right };
 }
 
 export async function installWindowLayout(platform, scope = window) {
@@ -33,6 +43,9 @@ export async function installWindowLayout(platform, scope = window) {
     if (insets) {
       html.style.setProperty('--app-top', insets.top + 'px');
       if (insets.bottom !== null) html.style.setProperty('--app-bottom', insets.bottom + 'px');
+      html.style.setProperty('--nav-height', insets.height + 'px');
+      html.style.setProperty('--nav-left', insets.left + 'px');
+      html.style.setProperty('--nav-right', insets.right + 'px');
     }
     const css = scope.getComputedStyle(document.getElementById('app'));
     const top = parseFloat(css.paddingTop) || 0;

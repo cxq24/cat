@@ -18,8 +18,12 @@ let clickBusy = false;
 let rankPeriod = 'week';
 let rankValue = null;
 let rankError = false;
+let rankLoading = false;
 let rankRequest = 0;
 let shopReturn = 'home';
+let rankReturn = 'home';
+let settingsReturn = 'home';
+let rankSubmitting = false;
 let ready = false;
 let detailsOpen = false;
 const store = new SaveStore(platform, () => { if (ready) updateSaveIndicator(); });
@@ -53,7 +57,7 @@ function statusLabel(status) {
 function saveLabel() {
   if (store.localState === 'read-error') return '读取失败 · 原存档已保留';
   if (store.localState === 'unavailable') return '当前环境无法保存进度';
-  if (store.localState === 'write-error') return '本机保存未确认 · 点击重试';
+  if (store.localState === 'write-error') return '本机保存未确认';
   if (store.localState === 'saving') return '正在保存…';
   if (platform.preview) return '浏览器试玩 · 模拟本机存档';
   if (store.cloudState === 'syncing') return '本机已保存 · 云端同步中';
@@ -65,10 +69,37 @@ function saveLabel() {
 
 function updateSaveIndicator() {
   document.querySelectorAll('[data-save-status]').forEach(node => { node.textContent = saveLabel(); });
+  document.querySelectorAll('.save-footer').forEach(node => { node.outerHTML = saveFooter(); });
 }
 
 function header() {
-  return `<header class="topbar"><button class="brand" data-action="home" aria-label="返回猫咖首页"><span class="brand-mark">喵</span><span>猫咖接待<span class="brand-sub">今天，也好好相遇。</span></span></button><div class="top-actions"><span class="coin"><span aria-hidden="true">◉</span> ${wallet(progress())}</span><button class="icon-button" data-action="settings" aria-label="存档与说明">···</button></div></header>`;
+  const titles = { cats: '今日猫咪', guest: '接待客人', arrange: '安排入座', feedback: '接待反馈', summary: '打烊结算', shop: '升级小店', ranks: '接待排行榜', settings: '存档帮助' };
+  return `<header class="topbar">${screen === 'home' ? '<span class="brand">猫咖接待</span>' : `<button class="nav-back" data-action="back" aria-label="${activeDay() ? '返回首页' : '返回上一页'}"><span aria-hidden="true">‹</span>返回</button><span class="nav-title">${titles[screen]}</span>`}</header>`;
+}
+
+function activeDay() {
+  return ['cats', 'guest', 'arrange', 'feedback'].includes(screen);
+}
+
+function returnHome() {
+  if (activeDay() && day.results.length && !progress().days[day.number] && !window.confirm('今天还没打烊，返回首页后会重开当天，未结算收入不会入账。要返回首页吗？')) return;
+  day = null;
+  selection = { cat: null, seat: null };
+  go('home');
+}
+
+function back() {
+  if (screen === 'ranks') { rankRequest++; rankLoading = false; go(rankReturn); return; }
+  if (screen === 'shop') { go(shopReturn); return; }
+  if (screen === 'settings') { go(settingsReturn); return; }
+  returnHome();
+}
+
+function saveFooter() {
+  const needsHelp = ['read-error', 'write-error', 'unavailable'].includes(store.localState) || ['error', 'pending', 'too-large'].includes(store.cloudState);
+  const action = store.localState === 'write-error' ? '<button class="text-button" data-action="save-retry">重试保存</button>'
+    : needsHelp ? '<button class="text-button" data-action="settings">查看存档问题</button>' : '';
+  return `<div class="save-footer"><p class="save-status" data-save-status>${saveLabel()}</p>${action}</div>`;
 }
 
 function heading(eyebrow, title, description = '') {
@@ -79,7 +110,22 @@ function homePage() {
   const completed = Boolean(progress().days[progress().day]);
   const planned = createDay(progress());
   const prior = progress().summary;
-  return `<section class="home-page">${heading('一间小店，几位猫同事', '把今天，<br>交给一场猫的相遇。')}<div class="hero"><img src="./assets/cafe.png" alt="阳光照进猫咖，豆皮、霜降和米粒正在等客人" width="1536" height="1024"><div class="open-sign">${completed ? '今日已打烊' : '准备营业'}<span>CAT CAFÉ</span></div></div><div class="day-strip"><div><span class="small-label">营业手册</span><strong>第 ${progress().day} 天</strong></div><span class="strip-divider"></span><div><span class="small-label">${completed ? '今日已接待' : '今日来客'}</span><strong>${completed && prior ? prior.results.length : planned.guests.length} 桌<span class="soft"> / 慢慢来</span></strong></div><span class="tiny-flower" aria-hidden="true">✳</span></div><div class="home-description"><p>一位客人，一只猫，一个刚刚好的座位。</p><p>你来安排，猫咪负责自由发挥。</p></div><div class="home-actions">${button(completed ? '翻开今日结算 <span>→</span>' : '挂上营业牌 <span>→</span>', completed ? 'summary' : 'open')}<div class="home-secondary"><button data-action="shop">店里添点新朋友</button>${rankings.available ? '<button data-action="ranks">接待排行榜 ↗</button>' : '<span>每次营业，约两分钟</span>'}</div></div><button class="save-status" data-action="settings" data-save-status>${saveLabel()}</button></section>`;
+  return `<section class="home-page">
+    ${heading('一间小店，几位猫同事', '把今天，<br>交给一场猫的相遇。')}
+    <div class="hero"><img src="./assets/cafe.png" alt="阳光照进猫咖，豆皮、霜降和米粒正在等客人" width="1536" height="1024"><div class="open-sign">${completed ? '今日已打烊' : '准备营业'}<span>CAT CAFÉ</span></div></div>
+    <div class="day-strip">
+      <div><span class="small-label">营业手册</span><strong>第 ${progress().day} 天</strong></div>
+      <div><span class="small-label">${completed ? '今日已接待' : '今日来客'}</span><strong>${completed && prior ? prior.results.length : planned.guests.length} 桌</strong></div>
+      <div class="wallet-balance"><span class="small-label">金币余额</span><strong>${wallet(progress())}<small> 金币</small></strong></div>
+    </div>
+    <div class="home-description"><p>一位客人，一只猫，一个刚刚好的座位。</p><p>${progress().day === 1 && !completed ? '初始 20 金币，营业收益在打烊后入账。' : '每次营业，约两分钟。'}</p></div>
+    <div class="home-actions">
+      ${button(completed ? '翻开今日结算 <span>→</span>' : '挂上营业牌 <span>→</span>', completed ? 'summary' : 'open')}
+      <div class="home-secondary"><button data-action="shop">升级小店</button><button data-action="ranks">接待排行榜 ↗</button></div>
+    </div>
+    ${saveFooter()}
+    <p class="art-credit">场景插画由 AI 辅助生成</p>
+  </section>`;
 }
 
 function catsPage() {
@@ -154,13 +200,13 @@ function summaryPage() {
   if (!summary) return homePage();
   const { best, review, revenue } = summaryDetails(summary);
   const average = (summary.results.reduce((sum, result) => sum + result.score, 0) / summary.results.length).toFixed(1);
-  return `<section class="summary-page">${heading(`第 ${summary.day} 天 · 打烊手记`, '今天最合拍的一对。')}<div class="summary-print"><span class="print-stamp">好好相遇</span>${best ? pairArt(best) : '<div class="no-pair">今天先休息一下</div>'}<div class="pair-names">${best ? `${guestById(best.guestId).name}<span>＆</span>${catById(best.catId).name}` : '明天，再来一次'}<small>${best ? seatById(best.seatId).name + '的一次相遇' : '总有合拍的下一桌'}</small></div><div class="receipt-edge"></div><div class="receipt-totals"><div><span>今日营业额</span><strong>${revenue}<small> 金币</small></strong></div><div><span>平均接待分</span><strong>${average}<small> / 100</small></strong></div></div><div class="review-note"><span>留在留言簿上的一句话</span><blockquote>“${review}”</blockquote></div><div class="receipt-footer">今日接待 ${summary.results.length} 桌<span>累计金币 ${wallet(progress())}</span></div></div><div class="summary-actions">${button('开店，迎接下一天 <span>→</span>', 'next-day')}<div class="secondary-row">${button('升级小店', 'shop', 'secondary')}${button('分享今天 ↗', 'share-menu', 'secondary')}</div>${rankings.available ? '<button class="text-button rank-link" data-action="ranks">去看看接待排行榜 ↗</button>' : ''}</div><button class="save-status" data-action="settings" data-save-status>${saveLabel()}</button></section>`;
+  return `<section class="summary-page">${heading(`第 ${summary.day} 天 · 打烊手记`, '今天最合拍的一对。')}<div class="summary-print"><span class="print-stamp">好好相遇</span>${best ? pairArt(best) : '<div class="no-pair">今天先休息一下</div>'}<div class="pair-names">${best ? `${guestById(best.guestId).name}<span>＆</span>${catById(best.catId).name}` : '明天，再来一次'}<small>${best ? seatById(best.seatId).name + '的一次相遇' : '总有合拍的下一桌'}</small></div><div class="receipt-edge"></div><div class="receipt-totals"><div><span>今日营业额</span><strong>${revenue}<small> 金币</small></strong></div><div><span>平均接待分</span><strong>${average}<small> / 100</small></strong></div></div><div class="review-note"><span>留在留言簿上的一句话</span><blockquote>“${review}”</blockquote></div><div class="receipt-footer">今日接待 ${summary.results.length} 桌<span>累计金币 ${wallet(progress())}</span></div></div><div class="summary-actions">${button('开店，迎接下一天 <span>→</span>', 'next-day')}<div class="secondary-row">${button('升级小店', 'shop', 'secondary')}${button('分享今天 ↗', 'share-menu', 'secondary')}</div><button class="text-button rank-link" data-action="ranks">去看看接待排行榜 ↗</button></div>${saveFooter()}</section>`;
 }
 
 function shopPage() {
   const today = createDay(progress());
   const upgrades = [...CATS.filter(cat => cat.price).map(cat => ({ ...cat, type: 'cat', text: `${cat.fur} · ${cat.tags.join('、')}${cat.scratch ? ' · 会抓人' : ''}` })), { id: 'S04', name: '吧台座位', price: 30, type: 'seat', text: '安静、可看店员；与安静角落相邻。' }, ...ITEMS.map(item => ({ ...item, type: 'item' }))];
-  return `<section class="shop-page">${heading('给明天，留一点新期待', '店里添点什么？', '新朋友、新座位和小物件，从下一天开始可用。')}${progress().day >= 4 ? '<p class="notice">往后可能有第 4 桌。多一只猫、多一个座位，会从容一点。</p>' : ''}<div class="shop-list">${upgrades.map(item => {
+  return `<section class="shop-page">${heading('给明天，留一点新期待', '店里添点什么？', '新朋友、新座位和小物件，从下一天开始可用。')}<div class="wallet-panel"><span>可用金币</span><strong>${wallet(progress())}<small> 金币</small></strong></div>${progress().day >= 4 ? '<p class="notice">往后可能有第 4 桌。多一只猫、多一个座位，会从容一点。</p>' : ''}<div class="shop-list">${upgrades.map(item => {
     const owned = unlocked(progress(), item.id);
     const affordable = wallet(progress()) >= item.price;
     return `<article class="shop-row">${item.type === 'cat' ? catArt(item.id) : `<span class="shop-object ${item.id}" aria-hidden="true">${item.id === 'S04' ? '▤' : item.id === 'wand' ? '〰' : '▱'}</span>`}<div class="shop-info"><h2>${item.name}</h2><p>${item.text}</p>${item.id === 'C08' ? `<small>每日 30% 概率到店${owned && !today.cats.some(cat => cat.id === 'C08') ? ' · 今天没来' : ''}</small>` : ''}</div><button class="buy-button ${owned ? 'owned' : ''}" data-action="buy" data-id="${item.id}" ${owned || !affordable ? 'disabled' : ''}>${owned ? '已解锁' : `${item.price} ◉`}${!owned && !affordable ? `<small>还差 ${item.price - wallet(progress())}</small>` : ''}</button></article>`;
@@ -169,12 +215,26 @@ function shopPage() {
 
 function ranksPage() {
   const mine = rankValue && rankValue.mine;
-  return `<section class="ranks-page">${heading('和大家，比一比接待手艺', '接待排行榜', '按单日平均接待分排名，同周期保留最好成绩。')}<div class="tabs" role="tablist" aria-label="榜单周期">${[['week', '周榜'], ['all', '总榜']].map(([period, label]) => `<button role="tab" aria-selected="${rankPeriod === period}" class="${rankPeriod === period ? 'active' : ''}" data-action="period" data-id="${period}">${label}</button>`).join('')}</div>${rankError ? `<div class="empty-state"><p>${rankings.available ? '榜单暂时没准备好，请稍后再试。' : '排行榜内测权限尚未开通。'}</p>${rankings.available ? button('重新加载', 'load-rank', 'secondary') : ''}</div>` : !rankValue ? '<p class="empty-state" role="status">正在翻开接待榜…</p>' : `<div class="my-rank"><span>我的排名</span><strong>${mine.status === 'EXACT' ? mine.rank : mine.status === 'OVER_LIMIT' ? '500+' : '暂无成绩'}</strong><small>${mine.status === 'EXACT' ? mine.score + ' 分' : '完成营业后提交成绩'}</small></div>${!rankValue.rows.length ? '<p class="empty-state">这一期还没有成绩，等第一位接待员上榜。</p>' : `<ol class="rank-list">${rankValue.rows.map(row => `<li><span class="rank-number">${esc(row.rank)}</span><span>${esc(row.nickname || '猫咖来客')}</span><strong>${esc(row.score)}<small> 分</small></strong></li>`).join('')}</ol>`}`}<p class="footnote">周榜每周一北京时间 0 点开启新一期。</p>${progress().summary && rankings.available ? '<button class="text-button score-toggle" data-action="submit-rank">提交最近一次接待成绩</button>' : ''}<div class="page-bottom">${button('回到小店', 'back-summary', 'secondary')}</div></section>`;
+  const unavailable = (!rankings.supported || rankings.failureReason === 'permission') && !rankLoading;
+  const message = rankings.failureReason === 'permission' ? '当前小工具的排行榜权限尚未开通，开放后即可查看。'
+    : unavailable ? '当前环境暂不支持排行榜，可以先继续营业。'
+    : '榜单暂时加载失败，请稍后重试。';
+  return `<section class="ranks-page">
+    ${heading('和大家，比一比接待手艺', '接待排行榜', '按单日平均接待分排名，同周期保留最好成绩。')}
+    ${!unavailable ? `<div class="tabs" role="tablist" aria-label="榜单周期">${[['week', '周榜'], ['all', '总榜']].map(([period, label]) => `<button role="tab" aria-selected="${rankPeriod === period}" class="${rankPeriod === period ? 'active' : ''}" data-action="period" data-id="${period}">${label}</button>`).join('')}</div>` : ''}
+    ${rankError || unavailable ? `<div class="empty-state" role="status"><h2>${unavailable ? '排行榜暂未开放' : '暂时没能加载榜单'}</h2><p>${message}</p>${rankings.supported ? button('重新尝试', 'load-rank', 'secondary') : ''}</div>`
+      : !rankValue ? '<p class="empty-state" role="status">正在翻开接待榜…</p>'
+      : `<div class="my-rank"><span>我的排名</span><strong>${mine.status === 'EXACT' ? mine.rank : mine.status === 'OVER_LIMIT' ? '500+' : '暂无成绩'}</strong><small>${mine.status === 'EXACT' ? mine.score + ' 分' : '完成营业后提交成绩'}</small></div>
+        ${!rankValue.rows.length ? '<p class="empty-state">这一期还没有成绩，等第一位接待员上榜。</p>' : `<ol class="rank-list">${rankValue.rows.map(row => `<li><span class="rank-number">${esc(row.rank)}</span><span>${esc(row.nickname || '猫咖来客')}</span><strong>${esc(row.score)}<small> 分</small></strong></li>`).join('')}</ol>`}`}
+    ${!unavailable ? '<p class="footnote">周榜每周一北京时间 0 点开启新一期。</p>' : ''}
+    ${progress().summary && rankings.available ? `<button class="text-button score-toggle" data-action="submit-rank" ${rankSubmitting ? 'disabled' : ''}>${rankSubmitting ? '正在提交…' : '提交最近一次接待成绩'}</button>` : ''}
+    <div class="page-bottom">${button('返回', 'back', 'secondary')}</div>
+  </section>`;
 }
 
 function settingsPage() {
   const cloudTexts = { unavailable: '云存档为内测能力，当前未开放或客户端暂不支持。本机仍会保存进度。', pending: '上次云端写入结果尚未确认。会先查询核对，避免重复写入。', error: '同步暂未成功，本机进度已保留。可稍后重试。', 'too-large': '云存档超过当前单条容量限制，本机进度仍保留。', synced: '已与同账号云存档合并。再次打开时会先读取，营业间歇低频同步。', syncing: '正在核对并合并同账号的进度。', idle: '将在进入小店和营业间歇同步，每分钟最多发起一轮。' };
-  return `<section class="settings-page">${heading('营业手册', '存档与说明')}<div class="info-section"><h2>进度保存</h2><p data-save-status>${saveLabel()}</p><p>关键操作后保存本机进度。中途离开会重开当天，未结算收入不会入账；已购买的解锁会保留。</p>${store.localState === 'write-error' ? button('重试本机保存', 'save-retry', 'secondary') : ''}</div><div class="info-section"><h2>云端同步</h2><p>${cloudTexts[store.cloudState]}</p>${store.cloudAvailable ? button('核对并同步', 'sync', 'secondary') : ''}<p>多设备完成同一天只记一次收入；并发购买合并后按时间核算，可支付的解锁生效。</p></div><div class="info-section"><h2>这一间猫咖</h2><p>八位猫同事，各有脾气。每只猫和每个座位一天只接待一桌。相邻座位的猫若刚吵过，可能会继续拌嘴。</p><p>游戏中的毛类限制属于简化规则，不构成现实中的过敏防护建议。</p><p class="credits">原创猫咪造型与界面 · 场景插画由 AI 辅助生成<br>测试版 0.1.1 · 猫咖接待</p></div><div class="page-bottom">${button('回到小店', 'back-summary', 'secondary')}</div></section>`;
+  return `<section class="settings-page">${heading('营业手册', '存档与说明')}<div class="info-section"><h2>进度保存</h2><p data-save-status>${saveLabel()}</p><p>关键操作后保存本机进度。中途离开会重开当天，未结算收入不会入账；已购买的解锁会保留。</p>${store.localState === 'write-error' ? button('重试本机保存', 'save-retry', 'secondary') : ''}</div><div class="info-section"><h2>云端同步</h2><p>${cloudTexts[store.cloudState]}</p>${store.cloudAvailable ? button('核对并同步', 'sync', 'secondary') : ''}<p>多设备完成同一天只记一次收入；并发购买合并后按时间核算，可支付的解锁生效。</p></div><div class="info-section"><h2>这一间猫咖</h2><p>八位猫同事，各有脾气。每只猫和每个座位一天只接待一桌。相邻座位的猫若刚吵过，可能会继续拌嘴。</p><p>游戏中的毛类限制属于简化规则，不构成现实中的过敏防护建议。</p><p class="credits">原创猫咪造型与界面 · 场景插画由 AI 辅助生成<br>测试版 0.1.2 · 猫咖接待</p></div><div class="page-bottom">${button('返回', 'back', 'secondary')}</div></section>`;
 }
 
 function render() {
@@ -212,17 +272,31 @@ async function safeSync() {
   }
 }
 
-async function loadRanks() {
+async function loadRanks(retry = false) {
   const request = ++rankRequest;
   const period = rankPeriod;
   rankValue = null;
-  rankError = false;
+  rankError = !rankings.available && !retry;
+  rankLoading = !rankError;
   render();
+  if (rankError) return;
   try {
     const value = await rankings.list(period);
     if (request === rankRequest) rankValue = value;
   } catch { if (request === rankRequest) rankError = true; }
+  if (request === rankRequest) rankLoading = false;
   if (screen === 'ranks' && request === rankRequest) render();
+}
+
+async function submitRank() {
+  if (rankSubmitting) return;
+  rankSubmitting = true;
+  render();
+  const success = await rankings.submit(progress().summary);
+  rankSubmitting = false;
+  if (screen !== 'ranks') return;
+  toast(success ? '接待成绩已提交。' : '暂时无法提交成绩，请稍后重试。');
+  loadRanks();
 }
 
 function shareMenu() {
@@ -238,21 +312,28 @@ function shareMenu() {
     if (event.key === 'Escape') { dialog.remove(); previous.focus(); }
     if (event.key === 'Tab') {
       event.preventDefault();
-      const index = focusable.indexOf(document.activeElement);
-      focusable[(index + (event.shiftKey ? -1 : 1) + focusable.length) % focusable.length].focus();
+      const enabled = focusable.filter(node => !node.disabled);
+      const index = enabled.indexOf(document.activeElement);
+      enabled[(index + (event.shiftKey ? -1 : 1) + enabled.length) % enabled.length].focus();
     }
   });
   dialog.addEventListener('click', async event => {
     const target = event.target.closest('[data-action]');
-    if (!target) return;
+    if (!target || target.disabled) return;
     if (target.dataset.action === 'close-modal') { dialog.remove(); previous.focus(); return; }
-    focusable.forEach(node => { node.disabled = true; });
+    focusable.forEach(node => { node.disabled = node.dataset.action !== 'close-modal'; });
     try {
-      if (target.dataset.action === 'share-card') await platform.api.share({ type: 'card' });
-      else await platform.api.share({ type: 'image', image_resource: await shareImage() });
+      const options = target.dataset.action === 'share-card' ? { type: 'card' } : { type: 'image', image_resource: await shareImage() };
+      if (!dialog.isConnected) return;
+      await platform.api.share(options);
       dialog.remove();
-      previous.focus();
-    } catch { toast('暂时无法发起分享，请稍后重试或截图分享。'); focusable.forEach(node => { node.disabled = false; }); }
+      if (previous.isConnected) previous.focus();
+    } catch {
+      if (dialog.isConnected) {
+        toast('暂时无法发起分享，请稍后重试或截图分享。');
+        focusable.forEach(node => { node.disabled = false; });
+      }
+    }
   });
 }
 
@@ -297,16 +378,20 @@ function drawShareCat(ctx, id, x, y) {
 
 root.addEventListener('click', async event => {
   const target = event.target.closest('[data-action]');
-  if (!target || target.disabled || clickBusy) return;
+  if (!target || target.disabled) return;
   const action = target.dataset.action;
+  if (action === 'back' || action === 'shop-back') { back(); return; }
+  if (clickBusy) return;
   const id = target.dataset.id;
+  const actionScreen = screen;
+  const actionDay = day;
+  const saving = ['open', 'admit', 'continue', 'next-day', 'buy', 'wake', 'sync', 'save-retry', 'retry-load'].includes(action);
+  if (saving) { target.disabled = true; target.setAttribute('aria-busy', 'true'); }
   clickBusy = true;
   try {
     switch (action) {
-      case 'home':
-        if (['cats', 'guest', 'arrange', 'feedback'].includes(screen) && !window.confirm('离开后会重开当天，未结算收入不会入账。要回到首页吗？')) break;
-        day = null; go('home'); break;
-      case 'open': day = createDay(progress()); await checkpoint(); go('cats'); break;
+      case 'home': returnHome(); break;
+      case 'open': selection = { cat: null, seat: null }; day = createDay(progress()); await checkpoint(); go('cats'); break;
       case 'guest': go('guest'); break;
       case 'arrange': go('arrange'); break;
       case 'cat': selection.cat = id; go('arrange', true); break;
@@ -317,42 +402,50 @@ root.addEventListener('click', async event => {
         if (!day.wandUsed && available(progress(), 'wand') && status.state === 'sleep') { status.state = 'happy'; day.wandUsed = true; await checkpoint(); toast(catById(id).name + '醒来啦，今天心情好！'); render(); }
         break;
       }
-      case 'admit': admit(day, progress(), selection.cat, selection.seat); selection = { cat: null, seat: null }; detailsOpen = false; await checkpoint(); go('feedback'); break;
+      case 'admit':
+        admit(day, progress(), selection.cat, selection.seat);
+        selection = { cat: null, seat: null };
+        detailsOpen = false;
+        await checkpoint();
+        if (screen === actionScreen && day === actionDay) go('feedback');
+        break;
       case 'details': detailsOpen = !detailsOpen; render(); break;
       case 'continue':
         if (day.results.length === day.guests.length) {
           finishDay(progress(), day);
-          await checkpoint(); go('summary');
+          await checkpoint();
+          if (screen === actionScreen && day === actionDay) go('summary');
           rankings.submit(progress().summary).then(success => { if (!success && rankings.available) toast('成绩暂未提交，稍后可在排行榜重试。'); });
         } else go('guest');
         break;
       case 'summary': go('summary'); break;
-      case 'next-day': progress().day = Math.max(progress().day, progress().summary.day + 1); progress().updatedAt = Date.now(); await checkpoint(); day = createDay(progress()); go('cats'); break;
+      case 'next-day':
+        progress().day = Math.max(progress().day, progress().summary.day + 1);
+        progress().updatedAt = Date.now();
+        await checkpoint();
+        if (screen === actionScreen && day === actionDay) { day = createDay(progress()); go('cats'); }
+        break;
       case 'shop': shopReturn = screen === 'summary' ? 'summary' : 'home'; go('shop'); break;
-      case 'shop-back': go(shopReturn); break;
       case 'buy':
         if (buy(progress(), id)) { await checkpoint(); render(); toast('已解锁，下一天开始可用。'); }
         break;
-      case 'ranks': go('ranks'); await loadRanks(); break;
-      case 'load-rank': await loadRanks(); break;
-      case 'submit-rank': {
-        const success = await rankings.submit(progress().summary);
-        toast(success ? '接待成绩已提交。' : '暂时无法提交成绩，请稍后重试。');
-        await loadRanks();
-        break;
-      }
-      case 'period': rankPeriod = id; await loadRanks(); break;
+      case 'ranks': rankReturn = screen; go('ranks'); loadRanks(); break;
+      case 'load-rank': loadRanks(true); break;
+      case 'submit-rank': submitRank(); break;
+      case 'period': rankPeriod = id; loadRanks(); break;
       case 'share-menu': shareMenu(); break;
       case 'settings':
-        if (['cats', 'guest', 'arrange', 'feedback'].includes(screen)) { toast('关键操作会自动保存。离开当天会重开，打烊后收入才入账。'); break; }
+        settingsReturn = screen;
         go('settings'); break;
-      case 'back-summary': go(progress().summary && progress().day === progress().summary.day ? 'summary' : 'home'); break;
       case 'save-retry': await checkpoint(); render(); break;
       case 'sync': await safeSync(); render(); break;
       case 'retry-load': await store.retryLoad(); if (!store.readBlocked) { await safeSync(); } render(); break;
     }
   } catch (error) { toast(error.message || '这一步暂时没成功，请重试。'); }
-  finally { clickBusy = false; }
+  finally {
+    clickBusy = false;
+    if (saving && target.isConnected) { target.disabled = false; target.removeAttribute('aria-busy'); }
+  }
 });
 
 await store.load();
