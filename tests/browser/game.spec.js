@@ -1,0 +1,166 @@
+import { test, expect } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+import { createProgress } from '../../src/game.js';
+
+async function bridge(page, { full = false, readError = false, progress = null } = {}) {
+  const initial = progress || createProgress(1000);
+  initial.seed = 713;
+  await page.addInitScript(({ initial, full, readError }) => {
+    const key = 'cat-cafe-test-save';
+    if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ progress: initial }));
+    window.__calls = { writes: 0, shares: [], scores: [], cloud: [] };
+    window.xhs = {
+      launchOptions: { miniToolEnv: { buildVersion: 9550001 } },
+      miniTool: {
+        getStorage: async () => { if (readError) throw new Error('test read failure'); return { data: localStorage.getItem(key) }; },
+        setStorage: async ({ data }) => { window.__calls.writes++; localStorage.setItem(key, data); return { errMsg: 'setStorage:ok' }; },
+      }
+    };
+    if (full) {
+      Object.assign(window.xhs.miniTool, {
+        queryCloudStorage: async () => ({ items: window.__calls.cloud }),
+        addCloudStorage: async ({ items }) => { window.__calls.cloud = [{ id: 'abcdef0123456789abcdef01', content: items[0].content }]; return { data: [{ id: 'abcdef0123456789abcdef01', status: 'SUCCESS' }] }; },
+        updateCloudStorage: async ({ items }) => { window.__calls.cloud = [{ id: items[0].id, content: items[0].content }]; return { data: [{ id: items[0].id, status: 'SUCCESS' }] }; },
+        submitScore: async value => { window.__calls.scores.push(value); return { score: value.score }; },
+        getRankList: async () => ({ data: [{ rank: 1, score: 99, nickname: '<img src=x onerror=alert(1)>' }, { rank: 2, score: 92.5, nickname: '今天也是好接待' }] }),
+        getMyRank: async () => ({ status: 'EXACT', rank: 2, score: 92.5 }),
+        share: async value => { window.__calls.shares.push(value); return {}; },
+      });
+    }
+  }, { initial, full, readError });
+}
+
+async function startDay(page) {
+  await page.locator('[data-action="open"]').click();
+  await expect(page.getByText('今天，谁来上班？')).toBeVisible();
+  await page.locator('[data-action="guest"]').click();
+}
+
+async function seatNext(page, cat, seat) {
+  await page.locator('[data-action="arrange"]').click();
+  await expect(page.locator('[data-action="admit"]')).toBeDisabled();
+  await page.locator(`[data-action="cat"][data-id="${cat}"]`).click();
+  await page.locator(`[data-action="seat"][data-id="${seat}"]`).click();
+  await page.locator('[data-action="admit"]').click();
+  await expect(page.locator('.feedback-income')).toBeVisible();
+}
+
+test('complete first day, enforce occupancy, persist purchases and start next day', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await bridge(page);
+  await page.goto('/');
+  await mkdir('artifacts', { recursive: true });
+  await expect(page.locator('.hero img')).toBeVisible();
+  await page.screenshot({ path: 'artifacts/home-mobile.png', fullPage: true });
+  await startDay(page);
+  await seatNext(page, 'C01', 'S01');
+  await page.locator('[data-action="continue"]').click();
+  await page.locator('[data-action="arrange"]').click();
+  await expect(page.locator('[data-action="cat"][data-id="C01"]')).toBeDisabled();
+  await expect(page.locator('[data-action="seat"][data-id="S01"]')).toBeDisabled();
+  await expect(page.locator('.demand.compact')).toBeInViewport();
+  await expect(page.locator('.cat-picker')).toBeInViewport();
+  await expect(page.locator('[data-action="admit"]')).toBeInViewport();
+  await page.screenshot({ path: 'artifacts/arrangement-mobile.png', fullPage: true });
+  await page.locator('[data-action="cat"][data-id="C02"]').click();
+  await page.locator('[data-action="seat"][data-id="S03"]').click();
+  await page.locator('[data-action="admit"]').click();
+  await page.locator('[data-action="continue"]').click();
+  await seatNext(page, 'C03', 'S02');
+  await page.locator('[data-action="continue"]').click();
+  await expect(page.getByText('今天最合拍的一对。')).toBeVisible();
+  await expect(page.locator('.receipt-totals')).toBeInViewport();
+  await expect(page.locator('.review-note')).toBeInViewport();
+  await page.screenshot({ path: 'artifacts/settlement-mobile.png', fullPage: true });
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('cat-cafe-test-save')).progress);
+  expect(Object.keys(saved.days)).toEqual(['1']);
+  expect(saved.summary.results).toHaveLength(3);
+  await page.locator('[data-action="shop"]').click();
+  await page.locator('[data-action="buy"][data-id="wand"]').click();
+  await expect(page.locator('[data-action="buy"][data-id="wand"]')).toBeDisabled();
+  await page.reload();
+  await page.locator('[data-action="shop"]').click();
+  await expect(page.locator('[data-action="buy"][data-id="wand"]')).toHaveText('已解锁');
+  await page.locator('[data-action="shop-back"]').click();
+  await page.locator('[data-action="summary"]').click();
+  await page.locator('[data-action="next-day"]').click();
+  await expect(page.locator('.eyebrow')).toContainText('第 2 天');
+  expect(errors).toEqual([]);
+});
+
+test('partial day reload keeps base wallet and restarts with all cats free', async ({ page }) => {
+  await bridge(page);
+  await page.goto('/');
+  await startDay(page);
+  await seatNext(page, 'C01', 'S01');
+  await page.reload();
+  await expect(page.locator('.coin')).toContainText('20');
+  await startDay(page);
+  await page.locator('[data-action="arrange"]').click();
+  await expect(page.locator('[data-action="cat"][data-id="C01"]')).toBeEnabled();
+  await expect(page.locator('[data-action="seat"][data-id="S01"]')).toBeEnabled();
+});
+
+test('failed reads show retry screen and never write over existing progress', async ({ page }) => {
+  await bridge(page, { readError: true });
+  await page.goto('/');
+  await expect(page.getByText('营业手册暂时没翻开')).toBeVisible();
+  expect(await page.evaluate(() => window.__calls.writes)).toBe(0);
+  await page.locator('[data-action="retry-load"]').click();
+  expect(await page.evaluate(() => window.__calls.writes)).toBe(0);
+});
+
+test('cloud, leaderboard and share use SDK under restrictive CSP without external requests', async ({ page }) => {
+  const external = [];
+  page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:4174/')) external.push(request.url()); });
+  await bridge(page, { full: true });
+  await page.goto('/');
+  await startDay(page);
+  for (const [cat, seat] of [['C01', 'S01'], ['C02', 'S03'], ['C03', 'S02']]) {
+    await seatNext(page, cat, seat);
+    await page.locator('[data-action="continue"]').click();
+  }
+  await expect(page.locator('.summary-print')).toBeVisible();
+  const scoreCalls = await page.evaluate(() => window.__calls.scores);
+  expect(scoreCalls).toHaveLength(1);
+  expect(scoreCalls[0].score).toBeGreaterThanOrEqual(0);
+  expect(scoreCalls[0].score).toBeLessThanOrEqual(100);
+  await page.locator('[data-action="share-menu"]').click();
+  await page.locator('[data-action="share-image"]').click();
+  await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+  const share = await page.evaluate(() => window.__calls.shares[0]);
+  expect(share.type).toBe('image');
+  expect(share.image_resource).toMatch(/^data:image\/png;base64,/);
+  await page.locator('[data-action="ranks"]').click();
+  await expect(page.locator('.my-rank')).toContainText('92.5');
+  await expect(page.locator('.rank-list li')).toHaveCount(2);
+  await expect(page.locator('.rank-list img')).toHaveCount(0);
+  await page.screenshot({ path: 'artifacts/ranking-mobile.png', fullPage: true });
+  await page.getByRole('tab', { name: '总榜' }).click();
+  await expect(page.getByRole('tab', { name: '总榜' })).toHaveAttribute('aria-selected', 'true');
+  expect(external).toEqual([]);
+});
+
+for (const width of [320, 375, 430]) {
+  test(`arrangement fits ${width}px mobile width with eight cats and four seats`, async ({ page }) => {
+    const progress = createProgress(1000);
+    progress.day = 5;
+    progress.days[1] = { revenue: 500, score: 300, at: 2000 };
+    progress.purchases = { C04: 3000, C05: 3001, C06: 3002, C07: 3003, C08: 3004, S04: 3005 };
+    await bridge(page, { progress });
+    await page.setViewportSize({ width, height: Math.round(width * 16 / 9) });
+    await page.goto('/');
+    await startDay(page);
+    await page.locator('[data-action="arrange"]').click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+    await expect(page.locator('.cat-picker')).toBeVisible();
+    await expect(page.locator('.floorplan')).toBeVisible();
+    await expect(page.locator('.demand.compact')).toBeInViewport({ ratio: 1 });
+    await expect(page.locator('.cat-picker')).toBeInViewport({ ratio: 1 });
+    await expect(page.locator('[data-action="admit"]')).toBeInViewport({ ratio: 1 });
+    const bounds = await page.locator('.demand.compact').boundingBox();
+    const end = await page.locator('.cat-picker').boundingBox();
+    expect(end.y + end.height - bounds.y).toBeLessThan(Math.round(width * 16 / 9));
+  });
+}
