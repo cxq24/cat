@@ -310,7 +310,7 @@ test('unsupported leaderboard has a stable entry, a clear explanation and a work
   await page.goto('/');
   await page.locator('[data-action="ranks"]').click();
   await expect(page.getByText('排行榜暂未开放')).toBeVisible();
-  await expect(page.getByText('当前环境暂不支持排行榜，可以先继续营业。')).toBeVisible();
+  await expect(page.getByText('当前容器未提供这个排行榜接口。', { exact: true }).first()).toBeVisible();
   await page.locator('.nav-back').click();
   await expect(page.locator('[data-action="ranks"]')).toBeVisible();
   await page.locator('[data-action="ranks"]').click();
@@ -323,7 +323,7 @@ test('permission denial preserves leaderboard entry and explicit retry can recov
   await page.goto('/');
   await page.evaluate(() => { window.xhs.miniTool.getRankList = async () => { throw { errCode: 1005 }; }; });
   await page.locator('[data-action="ranks"]').click();
-  await expect(page.getByText('当前小工具的排行榜权限尚未开通，开放后即可查看。')).toBeVisible();
+  await expect(page.getByText('排行榜未授权，请核实内测资格及上传时的用户头像昵称授权。', { exact: true })).toBeVisible();
   await expect(page.getByText(/关注/)).toHaveCount(0);
   await page.locator('.nav-back').click();
   await expect(page.locator('[data-action="ranks"]')).toBeVisible();
@@ -390,4 +390,47 @@ test('return during seating save remains on home when the delayed save finishes'
   await expect(page.locator('.home-page')).toBeVisible();
   await expect(page.locator('.feedback-page')).toHaveCount(0);
   await expect(page.locator('.wallet-balance')).toContainText('20');
+});
+
+test('personal rank permission failure does not hide public rows and displays the failing method', async ({ page }) => {
+  await bridge(page, { full: true });
+  await page.goto('/');
+  await page.evaluate(() => { window.xhs.miniTool.getMyRank = async () => { throw { errCode: 1005 }; }; });
+  await page.locator('[data-action="ranks"]').click();
+  await expect(page.locator('.rank-list li')).toHaveCount(2);
+  await expect(page.getByText('本人排名暂未读取，公开榜单仍可查看。')).toBeVisible();
+  await page.getByText('排行榜诊断信息', { exact: true }).click();
+  await expect(page.locator('.rank-diagnostics')).toContainText('getMyRank');
+  await expect(page.locator('.rank-diagnostics')).toContainText('错误码 1005');
+  await page.screenshot({ path: 'artifacts/rank-diagnostic-v0.1.3.png', fullPage: true });
+  await page.locator('.nav-back').click();
+  await expect(page.locator('.home-page')).toBeVisible();
+});
+
+test('slow personal rank shows public rows immediately and return remains usable', async ({ page }) => {
+  await bridge(page, { full: true });
+  await page.goto('/');
+  await page.evaluate(() => { window.xhs.miniTool.getMyRank = () => new Promise(() => {}); });
+  await page.locator('[data-action="ranks"]').click();
+  await expect(page.locator('.rank-list li')).toHaveCount(2, { timeout: 1000 });
+  await expect(page.getByText('正在读取本人排名，公开榜单已显示。')).toBeVisible();
+  await page.locator('.nav-back').click({ timeout: 1000 });
+  await expect(page.locator('.home-page')).toBeVisible();
+});
+
+test('failed submission leaves public leaderboard readable', async ({ page }) => {
+  await bridge(page, { full: true });
+  await page.goto('/');
+  await page.evaluate(() => { window.xhs.miniTool.submitScore = async () => { throw { errCode: 1005 }; }; });
+  await startDay(page);
+  for (const [cat, seat] of [['C01', 'S01'], ['C02', 'S03'], ['C03', 'S02']]) {
+    await seatNext(page, cat, seat);
+    await page.locator('[data-action="continue"]').click();
+  }
+  await page.locator('[data-action="ranks"]').click();
+  await expect(page.locator('.rank-list li')).toHaveCount(2);
+  await expect(page.locator('.score-feedback')).toContainText('成绩提交未获确认');
+  await page.getByText('排行榜诊断信息', { exact: true }).click();
+  await expect(page.locator('.rank-diagnostics')).toContainText('submitScore');
+  await expect(page.locator('.rank-diagnostics')).toContainText('错误码 1005');
 });

@@ -213,28 +213,53 @@ function shopPage() {
   }).join('')}</div><div class="page-bottom">${button('回到小店 <span>→</span>', 'shop-back', 'secondary')}</div></section>`;
 }
 
+function rankDiagnostics() {
+  const version = platform.version === null ? '未读取到' : String(platform.version);
+  const rows = [
+    ['getRankList', '公开榜单', rankings.readIssue],
+    ['getMyRank', '本人排名', rankings.personalIssue],
+    ['submitScore', '成绩提交', rankings.submitIssue],
+  ];
+  return `<details class="rank-diagnostics"><summary>排行榜诊断信息</summary>
+    <p>客户端版本值 ${esc(version)} · 应用版本 0.1.3</p>
+    ${rows.map(([method, label, issue]) => `<div><strong>${label}</strong><span>${method} · ${platform.api && typeof platform.api[method] === 'function' ? '接口存在' : '接口缺少'}</span>${issue ? `<p>错误码 ${esc(issue.code)} · ${esc(issue.reason)}</p>` : ''}</div>`).join('')}
+    <p>排查时请提供失败项的接口名和错误码。</p>
+  </details>`;
+}
+
+function submissionFeedback() {
+  if (!progress().summary) return '';
+  const texts = {
+    'not-submitted': '最近一局的提交结果尚未核对。',
+    submitting: '正在提交最近一局成绩…',
+    submitted: `已确认提交最近一局 ${rankings.lastScore} 分。`,
+    error: `成绩提交未获确认。${rankings.submitIssue ? rankings.submitIssue.reason : ''}`,
+  };
+  return `<p class="score-feedback" role="status">${esc(texts[rankings.submissionStatus])}</p>`;
+}
+
 function ranksPage() {
   const mine = rankValue && rankValue.mine;
   const unavailable = (!rankings.supported || rankings.failureReason === 'permission') && !rankLoading;
-  const message = rankings.failureReason === 'permission' ? '当前小工具的排行榜权限尚未开通，开放后即可查看。'
-    : unavailable ? '当前环境暂不支持排行榜，可以先继续营业。'
-    : '榜单暂时加载失败，请稍后重试。';
+  const message = rankings.readIssue ? rankings.readIssue.reason : '榜单暂时加载失败，请稍后重试。';
   return `<section class="ranks-page">
     ${heading('和大家，比一比接待手艺', '接待排行榜', '按单日平均接待分排名，同周期保留最好成绩。')}
     ${!unavailable ? `<div class="tabs" role="tablist" aria-label="榜单周期">${[['week', '周榜'], ['all', '总榜']].map(([period, label]) => `<button role="tab" aria-selected="${rankPeriod === period}" class="${rankPeriod === period ? 'active' : ''}" data-action="period" data-id="${period}">${label}</button>`).join('')}</div>` : ''}
     ${rankError || unavailable ? `<div class="empty-state" role="status"><h2>${unavailable ? '排行榜暂未开放' : '暂时没能加载榜单'}</h2><p>${message}</p>${rankings.supported ? button('重新尝试', 'load-rank', 'secondary') : ''}</div>`
       : !rankValue ? '<p class="empty-state" role="status">正在翻开接待榜…</p>'
-      : `<div class="my-rank"><span>我的排名</span><strong>${mine.status === 'EXACT' ? mine.rank : mine.status === 'OVER_LIMIT' ? '500+' : '暂无成绩'}</strong><small>${mine.status === 'EXACT' ? mine.score + ' 分' : '完成营业后提交成绩'}</small></div>
+      : `${mine ? `<div class="my-rank"><span>我的排名</span><strong>${mine.status === 'EXACT' ? mine.rank : mine.status === 'OVER_LIMIT' ? '500+' : '暂无成绩'}</strong><small>${mine.status === 'EXACT' ? mine.score + ' 分' : '完成营业后提交成绩'}</small></div>` : `<p class="personal-rank-status" role="status">${rankValue.personalPending ? '正在读取本人排名，公开榜单已显示。' : '本人排名暂未读取，公开榜单仍可查看。'}</p>`}
         ${!rankValue.rows.length ? '<p class="empty-state">这一期还没有成绩，等第一位接待员上榜。</p>' : `<ol class="rank-list">${rankValue.rows.map(row => `<li><span class="rank-number">${esc(row.rank)}</span><span>${esc(row.nickname || '猫咖来客')}</span><strong>${esc(row.score)}<small> 分</small></strong></li>`).join('')}</ol>`}`}
     ${!unavailable ? '<p class="footnote">周榜每周一北京时间 0 点开启新一期。</p>' : ''}
-    ${progress().summary && rankings.available ? `<button class="text-button score-toggle" data-action="submit-rank" ${rankSubmitting ? 'disabled' : ''}>${rankSubmitting ? '正在提交…' : '提交最近一次接待成绩'}</button>` : ''}
+    ${submissionFeedback()}
+    ${progress().summary && rankings.submitSupported ? `<button class="text-button score-toggle" data-action="submit-rank" ${rankSubmitting || rankings.submissionStatus === 'submitting' ? 'disabled' : ''}>${rankSubmitting || rankings.submissionStatus === 'submitting' ? '正在提交…' : '提交最近一次接待成绩'}</button>` : ''}
+    ${rankDiagnostics()}
     <div class="page-bottom">${button('返回', 'back', 'secondary')}</div>
   </section>`;
 }
 
 function settingsPage() {
   const cloudTexts = { unavailable: '云存档为内测能力，当前未开放或客户端暂不支持。本机仍会保存进度。', pending: '上次云端写入结果尚未确认。会先查询核对，避免重复写入。', error: '同步暂未成功，本机进度已保留。可稍后重试。', 'too-large': '云存档超过当前单条容量限制，本机进度仍保留。', synced: '已与同账号云存档合并。再次打开时会先读取，营业间歇低频同步。', syncing: '正在核对并合并同账号的进度。', idle: '将在进入小店和营业间歇同步，每分钟最多发起一轮。' };
-  return `<section class="settings-page">${heading('营业手册', '存档与说明')}<div class="info-section"><h2>进度保存</h2><p data-save-status>${saveLabel()}</p><p>关键操作后保存本机进度。中途离开会重开当天，未结算收入不会入账；已购买的解锁会保留。</p>${store.localState === 'write-error' ? button('重试本机保存', 'save-retry', 'secondary') : ''}</div><div class="info-section"><h2>云端同步</h2><p>${cloudTexts[store.cloudState]}</p>${store.cloudAvailable ? button('核对并同步', 'sync', 'secondary') : ''}<p>多设备完成同一天只记一次收入；并发购买合并后按时间核算，可支付的解锁生效。</p></div><div class="info-section"><h2>这一间猫咖</h2><p>八位猫同事，各有脾气。每只猫和每个座位一天只接待一桌。相邻座位的猫若刚吵过，可能会继续拌嘴。</p><p>游戏中的毛类限制属于简化规则，不构成现实中的过敏防护建议。</p><p class="credits">原创猫咪造型与界面 · 场景插画由 AI 辅助生成<br>测试版 0.1.2 · 猫咖接待</p></div><div class="page-bottom">${button('返回', 'back', 'secondary')}</div></section>`;
+  return `<section class="settings-page">${heading('营业手册', '存档与说明')}<div class="info-section"><h2>进度保存</h2><p data-save-status>${saveLabel()}</p><p>关键操作后保存本机进度。中途离开会重开当天，未结算收入不会入账；已购买的解锁会保留。</p>${store.localState === 'write-error' ? button('重试本机保存', 'save-retry', 'secondary') : ''}</div><div class="info-section"><h2>云端同步</h2><p>${cloudTexts[store.cloudState]}</p>${store.cloudAvailable ? button('核对并同步', 'sync', 'secondary') : ''}<p>多设备完成同一天只记一次收入；并发购买合并后按时间核算，可支付的解锁生效。</p></div><div class="info-section"><h2>这一间猫咖</h2><p>八位猫同事，各有脾气。每只猫和每个座位一天只接待一桌。相邻座位的猫若刚吵过，可能会继续拌嘴。</p><p>游戏中的毛类限制属于简化规则，不构成现实中的过敏防护建议。</p><p class="credits">原创猫咪造型与界面 · 场景插画由 AI 辅助生成<br>测试版 0.1.3 · 猫咖接待</p></div><div class="page-bottom">${button('返回', 'back', 'secondary')}</div></section>`;
 }
 
 function render() {
@@ -276,12 +301,14 @@ async function loadRanks(retry = false) {
   const request = ++rankRequest;
   const period = rankPeriod;
   rankValue = null;
-  rankError = !rankings.available && !retry;
+  rankError = !rankings.supported;
   rankLoading = !rankError;
   render();
   if (rankError) return;
   try {
-    const value = await rankings.list(period);
+    const value = await rankings.list(period, value => {
+      if (screen === 'ranks' && request === rankRequest) { rankValue = value; render(); }
+    }, retry);
     if (request === rankRequest) rankValue = value;
   } catch { if (request === rankRequest) rankError = true; }
   if (request === rankRequest) rankLoading = false;
@@ -415,7 +442,7 @@ root.addEventListener('click', async event => {
           finishDay(progress(), day);
           await checkpoint();
           if (screen === actionScreen && day === actionDay) go('summary');
-          rankings.submit(progress().summary).then(success => { if (!success && rankings.available) toast('成绩暂未提交，稍后可在排行榜重试。'); });
+          rankings.submit(progress().summary).then(() => { if (screen === 'ranks' || screen === 'summary') render(); });
         } else go('guest');
         break;
       case 'summary': go('summary'); break;

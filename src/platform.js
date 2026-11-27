@@ -175,42 +175,91 @@ export class SaveStore {
 export class Rankings {
   constructor(platform) {
     this.platform = platform;
-    this.available = platform.supports(9510, ['submitScore', 'getRankList', 'getMyRank']);
-    this.supported = this.available;
-    this.failureReason = this.available ? null : 'unsupported';
+    this.supported = platform.supports(9510, ['getRankList']);
+    this.submitSupported = platform.supports(9510, ['submitScore']);
+    this.available = this.supported;
+    this.failureReason = this.supported ? null : 'unsupported';
+    this.readIssue = this.capabilityIssue('getRankList');
+    this.personalIssue = null;
+    this.submitIssue = this.capabilityIssue('submitScore');
+    this.submissionStatus = 'not-submitted';
+    this.lastScore = null;
     this.cache = new Map();
   }
 
+  capabilityIssue(method) {
+    let code;
+    if (!this.platform.api) code = 'SDK_MISSING';
+    else if (!Number.isSafeInteger(this.platform.version)) code = 'VERSION_UNKNOWN';
+    else if (this.platform.version < 9510) code = 'CLIENT_TOO_OLD';
+    else if (typeof this.platform.api[method] !== 'function') code = 'METHOD_MISSING';
+    return code ? this.issue(method, { code }) : null;
+  }
+
+  issue(method, error) {
+    const internalCodes = ['SDK_MISSING', 'VERSION_UNKNOWN', 'CLIENT_TOO_OLD', 'METHOD_MISSING', 'TIMEOUT', 'INVALID_RESPONSE', 'INVALID_SCORE'];
+    const nativeCode = error && error.errCode;
+    const code = /^-?\d+$/.test(String(nativeCode)) ? String(Number(nativeCode))
+      : internalCodes.includes(error && error.code) ? error.code : 'NO_CODE';
+    const descriptions = {
+      SDK_MISSING: '当前页面未取得小红书容器接口，请在小红书内打开。',
+      VERSION_UNKNOWN: '客户端版本读取失败，暂时无法确认排行榜兼容性。',
+      CLIENT_TOO_OLD: '排行榜需要小红书 9.51 或更新版本。',
+      METHOD_MISSING: '当前容器未提供这个排行榜接口。',
+      TIMEOUT: '平台接口在等待时间内没有返回，请稍后重试。',
+      INVALID_RESPONSE: '平台接口返回格式与当前开发文档不一致。',
+      INVALID_SCORE: '本次成绩格式无效，无法提交。',
+      '1005': '排行榜未授权，请核实内测资格及上传时的用户头像昵称授权。',
+      '10003': '容器白名单拒绝了这个接口，需要平台开通。',
+      '2002': '平台榜单缓存尚未准备完成，请稍后重试。',
+      '2008': '平台授权服务暂时不可用，请稍后重试。',
+      '2009': '排行榜调用过于频繁，请稍后重试。',
+      '1004': '提交分数超出了平台允许范围。',
+      '10001': '排行榜请求参数被平台拒绝。',
+      NO_CODE: '平台接口调用失败，返回结果中没有错误码。',
+    };
+    return { method, code, reason: descriptions[code] || '平台接口返回了错误，请按错误码核对。' };
+  }
+
   async request(method, options) {
+    const capability = this.capabilityIssue(method);
+    if (capability) throw { code: capability.code };
     let timeout;
     try {
       return await Promise.race([
         this.platform.api[method](options),
-        new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('排行榜请求超时')), 8000); }),
+        new Promise((_, reject) => { timeout = setTimeout(() => reject({ code: 'TIMEOUT' }), 8000); }),
       ]);
     } finally { clearTimeout(timeout); }
   }
 
   async submit(summary) {
-    if (!this.available) return false;
-    const total = summary.results.reduce((sum, result) => sum + result.score, 0);
-    const score = Math.round(total / summary.results.length * 100) / 100;
+    this.submissionStatus = 'submitting';
     try {
-      await this.request('submitScore', { board: 1, score });
+      if (!summary || !Array.isArray(summary.results) || !summary.results.length) throw { code: 'INVALID_SCORE' };
+      const total = summary.results.reduce((sum, result) => sum + result.score, 0);
+      const score = Math.round(total / summary.results.length * 100) / 100;
+      if (!Number.isFinite(score) || score < 0 || score > 100) throw { code: 'INVALID_SCORE' };
+      this.lastScore = score;
+      const response = await this.request('submitScore', { board: 1, score });
+      if (!response || !Number.isFinite(response.score)) throw { code: 'INVALID_RESPONSE' };
+      this.submitIssue = null;
+      this.submissionStatus = 'submitted';
       this.cache.clear();
       return true;
     } catch (error) {
-      if (isDenied(error)) { this.available = false; this.failureReason = 'permission'; }
+      this.submitIssue = this.issue('submitScore', error);
+      this.submissionStatus = 'error';
+      // Submission permissions do not establish whether public reads are allowed.
       return false;
     }
   }
 
-  async list(period) {
-    if (!this.supported) throw new Error('当前环境暂不支持排行榜');
+  async list(period, onPublic, refresh = false) {
     const cached = this.cache.get(period);
-    if (this.available && cached && Date.now() - cached.at < 30000) return cached.value;
+    if (!refresh && this.available && cached && !cached.value.personalIssue && Date.now() - cached.at < 30000) return cached.value;
+    let rows;
     try {
-      let rows;
       for (const delay of [0, 500, 1000, 2000, 4000]) {
         if (delay) await new Promise(resolve => setTimeout(resolve, delay));
         try {
@@ -218,17 +267,28 @@ export class Rankings {
           break;
         } catch (error) { if (Number(error.errCode) !== 2002 || delay === 4000) throw error; }
       }
-      const mine = await this.request('getMyRank', { board: 1, period });
-      if (!rows || !Array.isArray(rows.data) || !mine || !['EXACT', 'OVER_LIMIT', 'NO_SCORE', 'NOT_PARTICIPATING'].includes(mine.status)) throw new Error('榜单数据暂不可用');
-      const value = { rows: rows.data, mine };
+      if (!rows || !Array.isArray(rows.data)) throw { code: 'INVALID_RESPONSE' };
       this.available = true;
       this.failureReason = null;
-      this.cache.set(period, { at: Date.now(), value });
-      return value;
+      this.readIssue = null;
     } catch (error) {
-      if (isDenied(error)) { this.available = false; this.failureReason = 'permission'; }
-      else this.failureReason = 'network';
+      this.readIssue = this.issue('getRankList', error);
+      this.available = !isDenied(error) && this.supported;
+      this.failureReason = isDenied(error) ? 'permission' : this.supported ? 'network' : 'unsupported';
       throw error;
     }
+
+    if (typeof onPublic === 'function') onPublic({ rows: rows.data, mine: null, personalIssue: null, personalPending: true });
+    let mine = null;
+    this.personalIssue = null;
+    try {
+      const response = await this.request('getMyRank', { board: 1, period });
+      if (!response || !['EXACT', 'OVER_LIMIT', 'NO_SCORE', 'NOT_PARTICIPATING'].includes(response.status)) throw { code: 'INVALID_RESPONSE' };
+      if (response.status === 'EXACT' && (!Number.isInteger(response.rank) || response.rank < 1 || response.rank > 500 || !Number.isFinite(response.score))) throw { code: 'INVALID_RESPONSE' };
+      mine = response;
+    } catch (error) { this.personalIssue = this.issue('getMyRank', error); }
+    const value = { rows: rows.data, mine, personalIssue: this.personalIssue };
+    this.cache.set(period, { at: Date.now(), value });
+    return value;
   }
 }

@@ -249,6 +249,13 @@ h3 { font-size: 14px; }
 .rank-number { min-width: 38px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .rank-list li > strong { margin-left: auto; padding-left: 10px; white-space: nowrap; font-weight: 500; }
 .rank-list small { font-size: 9px; color: var(--muted); }
+.personal-rank-status, .score-feedback { padding: 12px; font-size: 11px; line-height: 1.8; background: #e9eddf; border-radius: 8px; margin-top: 14px; color: #58694e; }
+.rank-diagnostics { margin-top: 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 13px 0; }
+.rank-diagnostics summary { cursor: pointer; min-height: 32px; font-size: 12px; line-height: 32px; }
+.rank-diagnostics > p { font-size: 10px; color: var(--muted); line-height: 1.8; margin: 7px 0; }
+.rank-diagnostics > div { border-top: 1px solid var(--line); padding: 10px 0; }
+.rank-diagnostics strong { font-size: 11px; display: block; margin-bottom: 5px; }
+.rank-diagnostics span, .rank-diagnostics div p { font-size: 10px; line-height: 1.8; display: block; overflow-wrap: break-word; }
 .info-section { padding: 22px 0; border-top: 1px solid var(--line); }
 .info-section p { font-size: 12px; line-height: 1.9; color: #66715c; margin-top: 11px; }
 .info-section .button { margin-top: 13px; min-height: 44px; font-size: 12px; }

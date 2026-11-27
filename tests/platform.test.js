@@ -106,7 +106,7 @@ test('denied cloud capability becomes unavailable while local save remains funct
 test('rankings submit average score and never substitute failed requests with empty results', async () => {
   let submitted;
   const platform = fakePlatform();
-  platform.api.submitScore = async value => { submitted = value; };
+  platform.api.submitScore = async value => { submitted = value; return { score: value.score }; };
   platform.api.getRankList = async () => { throw { errCode: 1005 }; };
   platform.api.getMyRank = async () => ({ status: 'NO_SCORE' });
   const rankings = new Rankings(platform);
@@ -114,4 +114,57 @@ test('rankings submit average score and never substitute failed requests with em
   assert.equal(submitted.score, 92.5);
   await assert.rejects(() => rankings.list('week'));
   assert.equal(rankings.available, false);
+});
+
+test('a denied score submission must not disable public leaderboard reads', async () => {
+  const platform = fakePlatform();
+  platform.api.submitScore = async () => { throw { errCode: 1005 }; };
+  platform.api.getRankList = async () => ({ data: [{ rank: 1, score: 90, nickname: '猫咖来客' }] });
+  platform.api.getMyRank = async () => ({ status: 'NOT_PARTICIPATING' });
+  const rankings = new Rankings(platform);
+  assert.equal(await rankings.submit({ results: [{ score: 90 }] }), false);
+  assert.equal(rankings.available, true);
+  const result = await rankings.list('week');
+  assert.equal(result.rows.length, 1);
+});
+
+test('public leaderboard stays visible when personal rank fails', async () => {
+  const platform = fakePlatform();
+  platform.api.submitScore = async () => ({ score: 90 });
+  platform.api.getRankList = async () => ({ data: [{ rank: 1, score: 90, nickname: '猫咖来客' }] });
+  platform.api.getMyRank = async () => { throw { errCode: 1005 }; };
+  const rankings = new Rankings(platform);
+  const result = await rankings.list('week');
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.mine, null);
+  assert.equal(result.personalIssue.code, '1005');
+});
+
+test('public leaderboard only requires its own SDK method', async () => {
+  const platform = fakePlatform();
+  platform.api.getRankList = async () => ({ data: [] });
+  const rankings = new Rankings(platform);
+  assert.equal(rankings.supported, true);
+  const result = await rankings.list('week');
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.personalIssue.code, 'METHOD_MISSING');
+});
+
+test('invalid native submission response is not reported as confirmed success', async () => {
+  const platform = fakePlatform();
+  platform.api.submitScore = async () => undefined;
+  const rankings = new Rankings(platform);
+  assert.equal(await rankings.submit({ results: [{ score: 90 }] }), false);
+  assert.equal(rankings.submitIssue.code, 'INVALID_RESPONSE');
+  assert.equal(rankings.submissionStatus, 'error');
+});
+
+test('native allowlist rejection retains exact error code and method', async () => {
+  const platform = fakePlatform();
+  platform.api.getRankList = async () => { throw { errCode: 10003, errMsg: 'native rejection' }; };
+  const rankings = new Rankings(platform);
+  await assert.rejects(() => rankings.list('week'));
+  assert.equal(rankings.readIssue.method, 'getRankList');
+  assert.equal(rankings.readIssue.code, '10003');
+  assert.match(rankings.readIssue.reason, /白名单/);
 });
